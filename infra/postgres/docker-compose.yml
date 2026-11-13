@@ -1,0 +1,23 @@
+# app 专用 Postgres（与 LangFuse 隔离）。用法：cd infra/postgres && docker compose up -d
+# 暴露 5432 给宿主，app 服务通过 DATABASE_URL 连 localhost:5432。
+# 用 pgvector 官方镜像（自带 vector 扩展，供长期记忆向量检索；pg_trgm 走 contrib 已内置）。
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: mirror
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: mirror
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mirror -d mirror"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

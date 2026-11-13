@@ -1,0 +1,24 @@
+# 后端：node + tsx 直接跑 TypeScript，与本地 `npm start` 行为一致。
+# 构建上下文 = 仓库根目录（见 docker-compose.yml 的 build.context）。
+FROM node:24-alpine
+
+WORKDIR /app
+
+# 先拷贝清单装依赖（充分利用层缓存；workspaces 需要所有子包 package.json 在场）
+COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
+COPY apps/server/package.json apps/server/package.json
+COPY apps/client/package.json apps/client/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN npm ci
+
+# 拷贝运行所需源码（.env 不入镜像，密钥走 compose 注入）
+COPY apps/server apps/server
+COPY packages/contracts packages/contracts
+# L6：角色卡是唯一事实源，构建期生成 PERSONAS/COMPANIONS 结构化产物（不入 git）
+# character/ 也在运行期被 loadPersonaDetails 读（按需详情），故一并拷入镜像
+COPY character character
+COPY scripts/gen-personas.ts scripts/gen-personas.ts
+RUN npm run gen:personas
+
+EXPOSE 3001
+CMD ["npm", "start"]

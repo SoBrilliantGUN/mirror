@@ -1,0 +1,3 @@
+openai>=1.0
+opencc-python-reimplemented  # 可选：繁体字幕转简体
+

@@ -1,0 +1,31 @@
+# 前端：Next.js 多阶段构建 → standalone 产物 → 精简运行时。
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
+COPY apps/client/package.json apps/client/package.json
+COPY apps/server/package.json apps/server/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+RUN npm ci
+COPY apps/client apps/client
+COPY packages/contracts packages/contracts
+# L6：角色卡是唯一事实源，构建期生成 COMPANIONS（companions.generated.ts，不入 git）
+COPY character character
+COPY scripts/gen-personas.ts scripts/gen-personas.ts
+RUN npm run gen:personas
+
+# 浏览器端 NEXT_PUBLIC_* 在 build 时内联，这里注入后端地址
+ARG NEXT_PUBLIC_SERVER_URL=http://localhost:3001
+ENV NEXT_PUBLIC_SERVER_URL=$NEXT_PUBLIC_SERVER_URL
+RUN npm run build -w @mirror/client
+
+FROM node:24-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+# standalone 已含 server.js + node_modules；static 需单独拷（standalone 不含静态资源）
+COPY --from=deps /app/apps/client/.next/standalone ./
+COPY --from=deps /app/apps/client/.next/static ./apps/client/.next/static
+# standalone 的 package.json 沿用了 monorepo 根的 "type": "module"，会让 CommonJS 的 server.js
+# 被当成 ESM 报 require 未定义。去掉该字段，让 server.js 按 CommonJS 正常跑。
+RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));delete p.type;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+EXPOSE 3000
+CMD ["node", "apps/client/server.js"]

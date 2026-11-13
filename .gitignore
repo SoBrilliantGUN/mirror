@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+samples/
+
+# Next.js 构建产物
+.next/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+
+# 评测脚本缓存（emotion-gold 拉取语料/模型的本地缓存）
+emotion-gold/.cache/
+
+# L6 生成物：由 npm run gen:personas 构建期生成，不入库（唯一事实源在 character/）
+apps/server/src/persona/generated.ts
+apps/client/app/companions.generated.ts
+
+# 招呼语试听目录（本地 TTS 试听产物，convert.mjs 从缓存 dump 转出，不入库）
+greetings-listen/
+
+# 招呼语 TTS 磁盘缓存（重启复用，避免重复烧 TTS 调用）
+apps/server/.greetings-cache/
+
+# 节假日联网缓存（重启复用，避免重复联网查）
+apps/server/.holiday-cache.json

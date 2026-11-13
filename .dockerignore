@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+**/node_modules/
+**/.next/
+dist/
+*.tsbuildinfo
+
+# 密钥与本地数据（绝不进镜像）
+.env
+**/.env
+data/
+samples/
+
+# 不参与镜像的内容
+infra/
+docs/
+user/
+.git/
+*.log
+.DS_Store

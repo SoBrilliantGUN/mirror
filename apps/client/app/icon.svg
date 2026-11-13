@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="mirror">
+  <defs>
+    <linearGradient id="sky" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="512">
+      <stop offset="0" stop-color="#FFB37A"/>
+      <stop offset="1" stop-color="#FF7A45"/>
+    </linearGradient>
+    <linearGradient id="sea" gradientUnits="userSpaceOnUse" x1="0" y1="512" x2="0" y2="1024">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#0891B2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 底 = 海（squircle） -->
+  <rect width="1024" height="1024" rx="230" fill="url(#sea)"/>
+
+  <!-- 顶 = 夕阳天空（上圆角、下边为海平线） -->
+  <path d="M 0 512 L 0 230 A 230 230 0 0 1 230 0 L 794 0 A 230 230 0 0 1 1024 230 L 1024 512 Z" fill="url(#sky)"/>
+
+  <!-- 夕阳（太阳） -->
+  <circle cx="512" cy="348" r="160" fill="#ffffff"/>
+  <!-- 海面倒影 -->
+  <circle cx="512" cy="676" r="160" fill="#ffffff" opacity="0.5"/>
+</svg>
