@@ -50,6 +50,7 @@
 - **全 TypeScript**，monorepo（`apps/*` + `packages/*`）
 - **前端**：Next.js（`apps/client`）——通话 UI + 麦克风采集 + 播放 + 前端 VAD（抢话打断）
 - **后端**：Node（`apps/server`）——实时传输 / 语音流水线 / 对话大脑 / 安全红线 / 状态与会话
+- **桌面版**：Electron（`apps/desktop`）——内嵌 Postgres + 语音 + 英文模式，打包成便携 exe
 - **实时语音**：WebRTC（服务端 `werift`），真·实时双工、可打断
 - **模型**：
 
@@ -92,7 +93,8 @@ L0 通话前端 → L1 实时传输 → L2 语音流水线 → L3 对话大脑 �
 mirror/
 ├── apps/
 │   ├── client/            # Next.js 前端：通话 UI + 采集 + 播放 + 前端 VAD
-│   └── server/            # Node 后端：L1/L2/L3/L4/L5 热路径 + 脚本 + 测试
+│   ├── server/            # Node 后端：L1/L2/L3/L4/L5 热路径 + 脚本 + 测试
+│   └── desktop/           # Electron 桌面版：内嵌 PG + 语音 + 英文模式 + 便携 exe
 ├── packages/
 │   └── contracts/         # 共享类型 + 接口契约（"缝"的物理位置）
 ├── character/             # 16 位陪伴者角色库（一人一个文件夹，渐进式加载）
@@ -152,6 +154,27 @@ docker compose up --build   # client(3000) + server(3001) + postgres(5432)
 ```
 
 实时语音（WebRTC）在 Docker 下已跑通：compose 发布 `50000-50100/udp` 的 ICE 媒体段，服务端 `icePortRange` + `iceAdditionalHostAddresses` 配置，浏览器上行 RTP / 下行 TTS 均正常。密钥从根目录 `.env` 注入，`DATABASE_URL` 会在 compose 内自动指向 `postgres` 服务。
+
+---
+
+## 构建 / 编译（改了代码怎么生效）
+
+monorepo 三块各管各的，**没有统一的编译命令**——改哪层就重建哪层：
+
+| 改动的代码 | 命令 | 说明 |
+|---|---|---|
+| 服务端 `apps/server/` | `npm run start` | `tsx` 直跑 TS，**无需编译**，改完即生效 |
+| Web 前端 `apps/client/` | `npm run client` / `npm run build -w @mirror/client` | dev 热更新 / 正式构建静态导出到 `apps/client/out/` |
+| 桌面版 `apps/desktop/` | `npm run dev -w @mirror/desktop` | rebundle 主进程 + server + 重建前端 + 启动 |
+| 出便携 exe | `npm run dist -w @mirror/desktop` | electron-builder 打包 `mirror-*-portable.exe` |
+
+**桌面版构建机制**（`apps/desktop/build.mjs`）：
+
+- esbuild 把 `apps/server/src/run.ts` → `dist/server.mjs`、`apps/desktop/src/main.ts` → `dist/main.mjs`、`preload.ts` → `dist/preload.cjs`
+- `build:renderer` = `next build` 客户端 → 复制 `out/` → `apps/desktop/renderer/`
+- 一句话：**只改服务端 → `npm run start`；要桌面版全量生效 → `npm run dev -w @mirror/desktop`；要出 exe → `npm run dist -w @mirror/desktop`**
+
+类型检查与自测见下方「测试与常用脚本」。
 
 ---
 
