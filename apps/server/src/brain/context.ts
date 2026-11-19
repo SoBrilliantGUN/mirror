@@ -12,7 +12,7 @@ import type {
   UpcomingDate,
   VocalizationEvent,
 } from '@mirror/contracts';
-import { buildGenerateSystemPrompt, formatUserTurn, SAFETY_REMINDER } from './prompts';
+import { formatUserTurn, SAFETY_REMINDER } from './prompts';
 import { anchorLabel } from './timeAware';
 
 // 上下文分层装配器（L0–L5，参考 kima 的 context-window-layering.md）。
@@ -53,7 +53,7 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
     { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },
-    { label: '人设（对方的身份基本信息 + 稳定特质 + 你对 TA 的理解，时刻记得）', items: recalled.persona },
+    { label: '人设（对方的身份基本信息 + 稳定特质 + 你对 TA 的理解，时刻记得）', items: recalled.profile },
     { label: '偏好（软规则/习惯，长期有效）', items: recalled.preference },
     { label: '事实（稳定状态）', items: recalled.fact },
     { label: '情节（具体事件）', items: recalled.episodic },
@@ -280,31 +280,4 @@ export function buildLayeredUserPrompt(input: {
   parts.push(`【对方这一轮】${formatUserTurn(input.text, input.vocalizations)}`);
 
   return parts.join('\n\n');
-}
-
-export type LayeredPrompts = { systemPrompt: string; userPrompt: string };
-
-// 顶层入口：L0 system + 其余层合并 user。复用现有 buildGenerateSystemPrompt 作为 L0。
-export function buildLayeredPrompts(input: {
-  mode: Mode;
-  stance: Stance;
-  emotion: EmotionTag;
-  personaSystemPrompt: string;
-  mood: MoodState | null;
-  turnCount: number;
-  affect?: Affect;
-  memories: RecalledMemories;
-  memoryBudget: number;
-  history: HistoryEntry[];
-  personaBlock?: string;
-  text: string;
-  vocalizations?: VocalizationEvent[];
-}): LayeredPrompts {
-  const systemPrompt = buildGenerateSystemPrompt({
-    mode: input.mode,
-    stance: input.stance,
-    personaSystemPrompt: input.personaSystemPrompt,
-  });
-  const userPrompt = buildLayeredUserPrompt(input);
-  return { systemPrompt, userPrompt };
 }

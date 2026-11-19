@@ -1,12 +1,13 @@
-import type { AcousticFeatures, Affect, HistoryTurn, MoodState, VocalizationEvent } from '@mirror/contracts';
+import type { AcousticFeatures, Affect, MoodState, VocalizationEvent } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
 import { SCORE_SYSTEM_PROMPT, buildScoreUserPrompt } from './prompts';
+import { parseJsonish } from './parse';
 
 // call1：打分（非流式，小输出）。LLM 融合文本 + 副语言 + 非言语发声（哭/笑）。
 export async function scoreAffect(
   llm: DeepSeek,
   model: string,
-  input: { text: string; history: HistoryTurn[]; acoustic: AcousticFeatures; mood: MoodState | null; vocalizations?: VocalizationEvent[] },
+  input: { text: string; acoustic: AcousticFeatures; mood: MoodState | null; vocalizations?: VocalizationEvent[] },
 ): Promise<Affect> {
   const content = await llm.chat(
     [
@@ -22,14 +23,8 @@ const clampScore = (x: number) => Math.min(2, Math.max(-2, x));
 
 // 容错：模型可能包 markdown 代码块或前后有杂字。
 export function parseAffect(raw: string): Affect {
-  const jsonStr = extractJson(raw);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(jsonStr);
-  } catch {
-    throw new Error(`打分解析失败，原始输出：${raw}`);
-  }
-  const o = obj as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) throw new Error(`打分解析失败，原始输出：${raw}`);
   const num = (v: unknown, fallback = 0) => {
     const n = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(n) ? n : fallback;
@@ -40,11 +35,4 @@ export function parseAffect(raw: string): Affect {
     dominance: clampScore(num(o.dominance)),
     incongruence: o.incongruence === true || o.incongruence === 'true',
   };
-}
-
-function extractJson(raw: string): string {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) return fence[1].trim();
-  const brace = raw.match(/\{[\s\S]*\}/);
-  return brace ? brace[0] : raw;
 }

@@ -62,8 +62,8 @@ export async function ensureSchema(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_at date`);
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_rule jsonb`);
 
-  // 迁移：insight 并入 persona（记忆四类重构：事实/偏好/情节/人设）。
-  await pool.query(`UPDATE memories SET kind = 'persona' WHERE kind = 'insight'`);
+  // 迁移：记忆类型「人设」曾叫 insight、后叫 persona，现统一为 profile（区分于陪伴者 Persona）。
+  await pool.query(`UPDATE memories SET kind = 'profile' WHERE kind IN ('insight', 'persona')`);
 
   // 向量检索（HNSW 近似最近邻，只索引有向量的行）+ 按人物/用户/类型过滤 + 词法相似度
   await pool.query(`

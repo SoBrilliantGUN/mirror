@@ -59,8 +59,6 @@ export type AssembleDeps = {
 
 export type AssembleInput = {
   text: string;
-  history: HistoryEntry[]; // 会话历史（未压缩，本轮会先压缩再装配）
-  loadedDetails: PersonaDetail[]; // 会话级已加载的人物详情（前几轮命中过、仍生效）
   mode: Mode;
   stance: Stance;
   emotion: EmotionTag;
@@ -86,12 +84,6 @@ export type AssembleInput = {
   searchEnabled?: boolean; // 配了联网搜索 key → 注入 search_web 工具使用规则
 };
 
-export type AssemblePlan = {
-  messages: ChatMessage[]; // 完整上下文（system + user），供流式生成最终回复
-  recalled: RecalledMemories; // 本轮实际注入的记忆（观测用）
-  loadedDetails: PersonaDetail[]; // 本轮结束后仍生效的人物详情（回写给会话缓存）
-};
-
 // 召回阶段只需要这三样，与打分（mode/stance/emotion）无关 → 可并行
 export type RecallInput = {
   text: string;
@@ -107,12 +99,26 @@ export type RecalledContext = {
   selfAdded: SelfAdded[]; // 人设增补（陪伴者说过的软细节，强制在场）
   goals: GrowthGoal[];    // 进行中的成长课题（[GOAL] 块注入）
   coverage: CoverageEntry[]; // dimension + aspect → 已知事实数（好奇心缺口检测用）
-  time: { timeContext: TimeContext; upcoming: UpcomingDate[]; careHint: string };
+  time: { timeContext?: TimeContext; upcoming: UpcomingDate[]; careHint: string };
 };
 
-const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], preference: [], episodic: [], persona: [] };
+const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], preference: [], episodic: [], profile: [] };
 
-const RECALL_KEYS = ['constraint', 'persona', 'fact', 'preference', 'episodic'] as const;
+const RECALL_KEYS = ['constraint', 'profile', 'fact', 'preference', 'episodic'] as const;
+
+// 空的召回上下文：eval/demo（无长期记忆）复用生产同一套消息装配时用。
+export function emptyRecall(): RecalledContext {
+  return {
+    recalled: EMPTY_RECALL,
+    loadedDetails: [],
+    compressedHistory: [],
+    personaBlock: '',
+    selfAdded: [],
+    goals: [],
+    coverage: [],
+    time: { timeContext: undefined, upcoming: [], careHint: '' },
+  };
+}
 
 // 会话内合并人物详情：已加载的保持，新命中的追加（按 name 去重，先到先得）。
 function mergeDetails(loaded: PersonaDetail[], fresh: PersonaDetail[]): PersonaDetail[] {
@@ -129,7 +135,7 @@ export function mergeRecalled(base: RecalledMemories, extra: Memory[]): Recalled
   for (const k of RECALL_KEYS) for (const m of base[k]) seen.add(m.id);
   const out: RecalledMemories = {
     constraint: [...base.constraint],
-    persona: [...base.persona],
+    profile: [...base.profile],
     fact: [...base.fact],
     preference: [...base.preference],
     episodic: [...base.episodic],
@@ -198,7 +204,7 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
 }
 
 // 从召回结果 + 决策结果装配最终 messages。
-export function buildTurnMessages(ctx: RecalledContext, deps: AssembleDeps, input: AssembleInput): ChatMessage[] {
+export function buildTurnMessages(ctx: RecalledContext, memoryBudget: number, input: AssembleInput): ChatMessage[] {
   const system = buildGenerateSystemPrompt({
     mode: input.mode,
     stance: input.stance,
@@ -242,7 +248,7 @@ export function buildTurnMessages(ctx: RecalledContext, deps: AssembleDeps, inpu
     goalFollowUp: input.goalFollowUp,
     safetyBlock: input.safetyAction?.action === 'refer' ? formatCrisisResources() : undefined,
     memories: ctx.recalled,
-    memoryBudget: deps.memoryBudget,
+    memoryBudget,
     history: summaries,
     personaBlock: ctx.personaBlock,
     selfAddedBlock: formatSelfAddedBlock(ctx.selfAdded),
@@ -251,11 +257,4 @@ export function buildTurnMessages(ctx: RecalledContext, deps: AssembleDeps, inpu
   });
   messages.push({ role: 'user', content: baseUser });
   return messages;
-}
-
-// 兼容旧调用方：一步到位（召回 + 装配）。
-export async function assembleTurn(deps: AssembleDeps, input: AssembleInput): Promise<AssemblePlan> {
-  const ctx = await recallContext(deps, input);
-  const messages = buildTurnMessages(ctx, deps, input);
-  return { messages, recalled: ctx.recalled, loadedDetails: ctx.loadedDetails };
 }

@@ -2,6 +2,7 @@ import type { SelfAdded, SelfAddedStore } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
 import type { Embedder } from '../llm/embedding';
 import { cosine } from '../persona/loadPersona';
+import { parseJsonish } from './parse';
 
 // 人设增补（后台 Agent，不进热路径）：把「陪伴者自己长出的软细节」固化下来。
 // - consolidateSelfAdded：一轮结束后，从「陪伴者这一轮回复」里抽「关于他自己的新软细节」
@@ -101,16 +102,8 @@ export async function consolidateSelfAdded(deps: {
 
 // 纯函数：解析抽取输出 { added }，非法/缺失返回 null。可单测。
 export function parseSelfAdded(raw: string): { category: string; content: string } | null {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return null;
-  }
-  const o = obj as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) return null;
   const added = o.added as Record<string, unknown> | null | undefined;
   if (!added) return null;
   const content = String(added.content ?? '').trim();

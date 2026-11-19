@@ -1,4 +1,5 @@
 import type { DeepSeek } from '../llm/deepseek';
+import { parseJsonish } from './parse';
 
 // 道别检测：用 LLM 判定「对方这一轮是否在道别/要结束通话」，替代原来的关键词正则。
 // 正则只看陪伴者自己的回复、漏判用户的再见；这里改用模型直接判用户意图，temperature 0 确定性输出。
@@ -15,16 +16,9 @@ const FAREWELL_SYSTEM_PROMPT = `你是道别意图判定器。读「对方这一
 
 // 纯函数：从模型输出里抽 farewell 布尔，非法/缺失返回 false。可单测。
 export function parseFarewell(raw: string): boolean {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return false;
-  }
-  const v = (obj as Record<string, unknown>).farewell;
+  const o = parseJsonish(raw);
+  if (!o) return false;
+  const v = o.farewell;
   return v === true || v === 'true';
 }
 

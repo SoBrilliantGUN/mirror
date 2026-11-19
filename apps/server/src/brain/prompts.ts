@@ -1,4 +1,4 @@
-import type { AcousticFeatures, DependenceAction, Frame, HistoryTurn, Mode, MoodState, Stance, VocalizationEvent } from '@mirror/contracts';
+import type { AcousticFeatures, DependenceAction, Frame, Mode, MoodState, Stance, VocalizationEvent } from '@mirror/contracts';
 
 // ============================================================
 // call1 打分 prompt
@@ -51,15 +51,11 @@ export function formatUserTurn(text: string, vocalizations?: VocalizationEvent[]
 
 export function buildScoreUserPrompt(input: {
   text: string;
-  history: HistoryTurn[];
   acoustic: AcousticFeatures;
   mood: MoodState | null;
   vocalizations?: VocalizationEvent[];
 }): string {
   const lines: string[] = [`【对方这一轮】${formatUserTurn(input.text, input.vocalizations)}`];
-  if (input.history.length) {
-    lines.push('【最近对话】' + input.history.map((h) => `${h.role === 'user' ? '对方' : '我'}：${h.text}`).join('\n'));
-  }
   lines.push(`【声音特征】${formatAcoustic(input.acoustic)}`);
   if (input.vocalizations?.length) {
     lines.push(`【非言语发声】${formatVocalizations(input.vocalizations)}`);
@@ -222,15 +218,6 @@ export function buildGenerateSystemPrompt(params: {
     BLOCK_ANTI_CLICHE,
     BLOCK_FORMAT,
   ].join('\n\n');
-}
-
-export function buildGenerateUserPrompt(text: string, history: HistoryTurn[], vocalizations?: VocalizationEvent[]): string {
-  const lines: string[] = [];
-  if (history.length) {
-    lines.push('【最近对话】' + history.map((h) => `${h.role === 'user' ? '对方' : '我'}：${h.text}`).join('\n'));
-  }
-  lines.push(`【对方这一轮】${formatUserTurn(text, vocalizations)}`);
-  return lines.join('\n');
 }
 
 // 主动发话的系统提示词：场景式单句，不套 BLOCK_CORE 的完整情绪节奏。

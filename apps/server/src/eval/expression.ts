@@ -3,6 +3,7 @@
 // 指标定义与锚点见 docs/评测指标.md §2；范围限 V0 上线的 4 位人设。
 import type { Persona } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
+import { parseJsonish } from '../brain/parse';
 
 export type ScoreEntry = { name: string; value: number; dataType: 'NUMERIC' | 'BOOLEAN' };
 export type ExpressionDimension = 'human_likeness' | 'persona_consistency' | 'factuality' | 'persona_bleed' | 'identity_honesty';
@@ -88,13 +89,6 @@ bleed=0 是当前人设在说；bleed=1 明显串成别人。`,
 【输出 JSON】{"applies": true/false, "score": <0 | 0.25 | 0.5 | 0.75 | 1.0>}`,
 };
 
-function extractJson(raw: string): string {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) return fence[1].trim();
-  const brace = raw.match(/\{[\s\S]*\}/);
-  return brace ? brace[0] : raw;
-}
-
 // 组装 judge 的 user prompt：当前人设 + 其他人设一行风格（供 bleed 判「串到谁」）+ 上下文 + 回复。
 function buildJudgeUserPrompt(p: {
   persona: Persona;
@@ -151,7 +145,8 @@ export async function scoreExpressionTurn(
       ],
       { model, temperature: 0, maxTokens: 120 },
     );
-    const obj = JSON.parse(extractJson(raw)) as Record<string, unknown>;
+    const obj = parseJsonish(raw);
+    if (!obj) continue;
     if (dim === 'persona_bleed') {
       const bleed = obj.bleed === 1 || obj.bleed === '1' || obj.bleed === true ? 1 : 0;
       entries.push({ name: 'expression.persona_bleed', value: bleed, dataType: 'BOOLEAN' });

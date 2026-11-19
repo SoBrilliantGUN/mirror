@@ -1,5 +1,6 @@
 import type { GrowthGoalStore, GrowthStage } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
+import { parseJsonish } from './parse';
 
 // 后台课题巩固（异步、不进热路径）：教练轮结束后，把「这轮聊的课题」结构化落进 growth_goals。
 // 只更新 GROW 四段 + 推进 stage + 检测做成/放下，其余交给 [GOAL] 块 + 模型做轻表达。
@@ -36,16 +37,8 @@ const STAGES = new Set<GrowthStage>(['goal', 'reality', 'options', 'will']);
 
 // 纯函数：从模型输出里解析课题进展，非法/缺失回退空。可单测。
 export function parseGoalExtract(raw: string): GoalExtract {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return empty();
-  }
-  const o = obj as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) return empty();
   const str = (k: string): string | null => {
     const v = o[k];
     return typeof v === 'string' && v.trim() ? v.trim() : null;

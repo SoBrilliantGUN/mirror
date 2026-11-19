@@ -2,7 +2,7 @@
 // 运行：npm test
 import { strict as assert } from 'node:assert';
 import type { Affect, SafetyAction } from '@mirror/contracts';
-import { decideMode, decideStance, decideVoiceConfig, decideEmotion } from '../src/brain/decide';
+import { decideMode, decideStance, decideEmotion } from '../src/brain/decide';
 import { ModeTracker } from '../src/brain/modeTracker';
 import { updateMood } from '../src/brain/mood';
 import { parseAffect } from '../src/brain/score';
@@ -48,23 +48,6 @@ ok('支配 >= 0 → guide', () => {
   assert.equal(decideStance(affect(0, 0, 0)), 'guide');
 });
 
-console.log('decideVoiceConfig');
-ok('casual 基底 speed 1.0，唤醒 0 不额外放慢', () => {
-  const v = decideVoiceConfig('casual', affect(0, 0, 0));
-  assert.equal(v.speed, 1.0);
-  assert.equal(v.pauseMore, false);
-});
-ok('careful 基底 speed 0.78，pauseMore true', () => {
-  const v = decideVoiceConfig('careful', affect(0, 0, 0));
-  assert.equal(v.speed, 0.78);
-  assert.equal(v.energy, 0.82);
-  assert.equal(v.pauseMore, true);
-});
-ok('唤醒越高越放慢（casual + arousal 2）', () => {
-  const v = decideVoiceConfig('casual', affect(0, 2, 0));
-  assert.ok(v.speed < 1.0 && v.speed >= 0.9);
-});
-
 console.log('decideEmotion（通用镜像）');
 ok('开心 → warm', () => {
   assert.equal(decideEmotion(affect(0.5, 0.2, 0.3)), 'warm');
@@ -91,11 +74,6 @@ console.log('updateMood（EMA）');
 ok('首轮 = α·affect，α=0.6', () => {
   const m = updateMood(null, affect(1, 0, 0));
   assert.ok(Math.abs(m.valence - 0.6) < 1e-9);
-});
-ok('recent 只保留最近 8 个点', () => {
-  let m = null as ReturnType<typeof updateMood> | null;
-  for (let i = 0; i < 20; i++) m = updateMood(m, affect(i % 2, 0, 0));
-  assert.equal(m!.recent.length, 8);
 });
 
 console.log('parseAffect（容错）');

@@ -5,19 +5,19 @@ import { Fragment, useEffect, useState } from 'react';
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
 type Mem = { id: string; kind: string; content: string; createdAt: string };
-type Filter = 'all' | 'fact' | 'preference' | 'episodic' | 'persona';
+type Filter = 'all' | 'fact' | 'preference' | 'episodic' | 'profile';
 
 const KIND_LABEL: Record<string, string> = {
-  fact: '事实', preference: '偏好', episodic: '情节', insight: '人设', persona: '人设', constraint: '约束',
+  fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
 };
-const SHOW_KINDS = ['fact', 'preference', 'episodic', 'insight', 'persona'];
-const chipClass = (k: string) => (k === 'insight' || k === 'persona' ? 'persona' : k);
+const SHOW_KINDS = ['fact', 'preference', 'episodic', 'profile'];
+const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
 const TABS: { key: Filter; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'fact', label: '事实' },
   { key: 'preference', label: '偏好' },
   { key: 'episodic', label: '情节' },
-  { key: 'persona', label: '人设' },
+  { key: 'profile', label: '人设' },
 ];
 
 export default function MemoryLibrary({ character, onClose }: { character: string; onClose: () => void }) {
@@ -56,7 +56,7 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
   }
 
   const shown = memories.filter((m) => {
-    if (filter === 'persona') { if (m.kind !== 'insight' && m.kind !== 'persona') return false; }
+    if (filter === 'profile') { if (m.kind !== 'profile') return false; }
     else if (filter !== 'all') { if (m.kind !== filter) return false; }
     if (q.trim() && !m.content.includes(q.trim())) return false;
     return true;

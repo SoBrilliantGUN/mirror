@@ -3,7 +3,7 @@
 import { loadConfig, loadDotEnv } from './config';
 import { DeepSeek } from './llm/deepseek';
 import { PERSONAS } from './persona/generated';
-import { NoopSafetyGuard, EmptyContextProvider, neutralAcoustic } from './stubs';
+import { NoopSafetyGuard, neutralAcoustic } from './stubs';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { turn } from './brain/turn';
@@ -18,12 +18,11 @@ async function main() {
   }
 
   const llm = new DeepSeek({ apiKey: cfg.deepseekApiKey, baseUrl: cfg.deepseekBaseUrl });
-  const context = await new EmptyContextProvider().get('demo-user');
 
   // 会话级状态（L5）：每会话一个 tracker + mood；教练交互框架 tracker 同理。
   const tracker = new ModeTracker();
   const coachTracker = new CoachTracker();
-  let mood: MoodState | null = context.mood;
+  let mood: MoodState | null = null;
 
   const sample = '我手头事太多了，脑子快炸了。';
   const result = await turn(
@@ -36,14 +35,13 @@ async function main() {
       coachTracker,
       mood,
     },
-    { text: sample, acoustic: neutralAcoustic(), persona: PERSONAS['程书衡'], context },
+    { text: sample, acoustic: neutralAcoustic(), persona: PERSONAS['程书衡'] },
   );
   mood = result.mood;
 
   console.log('对方说：', sample);
   console.log('打分：', result.affect);
   console.log('mode：', result.mode, '| stance：', result.stance, '| emotion：', result.emotion);
-  console.log('voiceConfig：', result.voiceConfig);
   console.log('程书衡：');
   for (const seg of result.segments) {
     console.log(`  ${seg}`);

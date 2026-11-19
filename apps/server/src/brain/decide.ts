@@ -1,7 +1,4 @@
-import type { Affect, EmotionTag, Mode, SafetyAction, Stance, VoiceConfig } from '@mirror/contracts';
-
-const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
-const round2 = (x: number) => Math.round(x * 100) / 100;
+import type { Affect, EmotionTag, Mode, SafetyAction, Stance } from '@mirror/contracts';
 
 // 判 mode：纯函数，黄旗/红旗阈值硬执行（可单测）。
 export function decideMode(affect: Affect, safety: SafetyAction): Mode {
@@ -15,16 +12,6 @@ export function decideMode(affect: Affect, safety: SafetyAction): Mode {
 // stance：由支配度驱动（低支配 → 只陪不抛清单）。
 export function decideStance(affect: Affect): Stance {
   return affect.dominance < 0 ? 'accompany' : 'guide';
-}
-
-// voiceConfig：基底 × 唤醒修正（安抚：唤醒越高越放慢）。
-export function decideVoiceConfig(mode: Mode, affect: Affect): VoiceConfig {
-  const base = mode === 'careful'
-    ? { speed: 0.78, energy: 0.82 }
-    : { speed: 1.0, energy: 1.0 };
-  const arousal = clamp(affect.arousal, 0, 2);
-  const speed = base.speed * (1 - 0.10 * (arousal / 2));
-  return { speed: round2(speed), energy: base.energy, pauseMore: mode === 'careful' };
 }
 
 // 通用镜像：由对方情绪（affect）决定回应方向。所有陪伴者共用。

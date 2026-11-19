@@ -1,5 +1,6 @@
 import type { CoachCue, Frame } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
+import { parseJsonish } from './parse';
 
 // 教练意图检测 + 交互框架状态机（Life Coach 改造的「显」这一半）。
 // - classifyCoachCue：每轮用 LLM 判「对方是不是在求助 / 卡点 / 已解决」——仿 classifyFarewell，确定性输出，可并行。
@@ -27,16 +28,8 @@ theme：若这轮能看出对方卡在什么事上（比如「和妈妈的关系
 
 // 纯函数：从模型输出里抽 { explicit, invite, resolved, theme }，非法/缺失回退全 false、theme null。可单测。
 export function parseCoachCue(raw: string): CoachCue {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return { explicit: false, invite: false, resolved: false, theme: null };
-  }
-  const o = obj as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) return { explicit: false, invite: false, resolved: false, theme: null };
   const theme = typeof o.theme === 'string' && o.theme.trim() ? o.theme.trim() : null;
   return {
     explicit: o.explicit === true || o.explicit === 'true',

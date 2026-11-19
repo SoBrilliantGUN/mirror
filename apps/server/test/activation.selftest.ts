@@ -27,7 +27,7 @@ const mem = (
 console.log('computeActivation（情节记忆软激活）');
 ok('非 episodic 恒 1（约束/事实/偏好/人设强制在场，不走时间衰减）', () => {
   assert.equal(computeActivation(mem(daysAgo(100), 0, null, 'fact'), NOW), 1);
-  assert.equal(computeActivation(mem(daysAgo(100), 0, null, 'persona'), NOW), 1);
+  assert.equal(computeActivation(mem(daysAgo(100), 0, null, 'profile'), NOW), 1);
   assert.equal(computeActivation(mem(daysAgo(100), 0, null, 'constraint'), NOW), 1);
 });
 ok('刚写入（age 0，无访问）→ 1', () => {

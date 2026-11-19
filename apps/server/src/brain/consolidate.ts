@@ -4,6 +4,7 @@ import type { PrefetchCache } from './assemble';
 import { DIMENSION_LIST, ASPECT_LIST } from './ontology';
 import { normalizeTimeAnchor, shanghaiParts } from './timeAware';
 import { parseTimeAnchor, rewriteRelativeTime } from './timeAnchor';
+import { parseJsonish } from './parse';
 
 // 后台记忆 Agent（异步、不进热路径）：把「写记忆」和「定向召回」从实时回复里挪出来。
 // - consolidateTurn：一轮结束后，从「对方说了什么 + 我回了什么」里抽取值得长期记住的内容，分类后落库。
@@ -17,10 +18,10 @@ const EXTRACT_SYSTEM_PROMPT = `你是记忆抽取助手。读「对方这一轮�
 1. 只抽「关于对方的稳定事实 / 反复表达的偏好 / 重要事件」，第三人称、一句话、具体不空泛。对方的事实只能来自【对方这一轮】。
 2. 【我这一轮】是陪伴者（你自己的人设）说的话，仅供理解语境，严禁从中抽取任何内容。陪伴者用第一人称说的（如「我拍照」「我遛狗」「我做时尚博主」）是他自己的事，绝不能写成「对方…」；陪伴者的猜测/追问（「是不是…」「可能…」「你是在…吧」）也不是对方说过的，不得写成对方的事实。
 3. 每句都记、琐碎寒暄不记。0~5 条，宁缺毋滥。
-4. kind 先自报（fact / preference / episodic / persona），系统会再核对一次。其中：
-   - persona = 人设，只记「身份基本信息」和「稳定特质」两类——名字/性别/年龄/职业/学校/地域/重要关系（如「对方是深圳大学学生」「对方自称章鱼哥」），以及性格/价值观/长期模式这类长期稳定的东西。别把一次性的状态（如「正在找工作」）写成 persona，那属于 fact。
+4. kind 先自报（fact / preference / episodic / profile），系统会再核对一次。其中：
+   - profile = 人设，只记「身份基本信息」和「稳定特质」两类——名字/性别/年龄/职业/学校/地域/重要关系（如「对方是深圳大学学生」「对方自称章鱼哥」），以及性格/价值观/长期模式这类长期稳定的东西。别把一次性的状态（如「正在找工作」）写成 profile，那属于 fact。
    - fact = 可变的、具体的事实状态（「正在学 RocketMQ」「目前没工作」「正在找工作」）。
-   - 一条只记一件事。若对方一句话里同时含「身份/地域/称呼」+「偏好」+「当前状态」，拆成多条分别归类：身份/地域/称呼（强相关，关于"对方是谁"）→ persona；口味/习惯等偏好 → preference；当前状态/正在做的事（弱相关）→ fact。严禁把身份信息（职业/学校/地域/重要关系/称呼）塞进 fact。
+   - 一条只记一件事。若对方一句话里同时含「身份/地域/称呼」+「偏好」+「当前状态」，拆成多条分别归类：身份/地域/称呼（强相关，关于"对方是谁"）→ profile；口味/习惯等偏好 → preference；当前状态/正在做的事（弱相关）→ fact。严禁把身份信息（职业/学校/地域/重要关系/称呼）塞进 fact。
 5. dimension 归入哪个维度（${DIMENSION_LIST}），实在归不进去就留空字符串。
 6. aspect 归入该维度的哪个子项（${ASPECT_LIST}），没有对应子项就留空字符串。
 7. 若这条记忆含「值得长期记住的时间」（生日/纪念日/忌日/规律作息），额外给 anchor，并把 content 写成绝对/周期措辞（如「对方生日是 11 月 13 日」）：
@@ -31,7 +32,7 @@ const EXTRACT_SYSTEM_PROMPT = `你是记忆抽取助手。读「对方这一轮�
 8. 若对方这一轮在纠正之前说过的某个事实（例如「不是签证，是全栈」「我刚才说错了」「其实不是…」），说明之前可能听错/记错了：除了抽取纠正后的正确事实，还要把被纠正掉的错误点放进 retract（放最简短的关键词，通常一个词，如「签证」；别放整句）。没有纠正就省略 retract。
 
 只输出这个 JSON（retract 可省略）：
-{"memories":[{"content":"<一句话>","kind":"fact|preference|episodic|persona","dimension":"<维度或空>","aspect":"<子项或空>","anchor":<绝对或周期锚点或省略>}],"retract":["<被纠正掉的错误关键词>"]}`;
+{"memories":[{"content":"<一句话>","kind":"fact|preference|episodic|profile","dimension":"<维度或空>","aspect":"<子项或空>","anchor":<绝对或周期锚点或省略>}],"retract":["<被纠正掉的错误关键词>"]}`;
 
 export type ExtractOutput = { content: string; kind: MemoryKind; dimension: string; aspect: string; anchor?: TimeAnchor }[];
 
@@ -123,18 +124,10 @@ export async function consolidateTurn(deps: {
 
 // 纯函数：从抽取输出里解析 {content, kind} 列表，非法/缺失返回空。可单测。
 export function parseExtraction(raw: string): ExtractOutput {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return [];
-  }
-  const o = obj as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) return [];
   const arr = Array.isArray(o.memories) ? o.memories : [];
-  const KINDS = new Set<MemoryKind>(['constraint', 'fact', 'preference', 'episodic', 'persona']);
+  const KINDS = new Set<MemoryKind>(['constraint', 'fact', 'preference', 'episodic', 'profile']);
   const out: ExtractOutput = [];
   for (const item of arr) {
     const x = (item ?? {}) as Record<string, unknown>;
@@ -152,16 +145,9 @@ export function parseExtraction(raw: string): ExtractOutput {
 
 // 纯函数：从抽取输出里解析 retract（对方这轮纠正掉的错误关键词列表）。可单测。
 export function parseRetraction(raw: string): string[] {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return [];
-  }
-  const arr = Array.isArray((obj as Record<string, unknown>).retract) ? ((obj as Record<string, unknown>).retract as unknown[]) : [];
+  const o = parseJsonish(raw);
+  if (!o) return [];
+  const arr = Array.isArray(o.retract) ? (o.retract as unknown[]) : [];
   return arr.map((x) => String(x ?? '').trim()).filter((s) => s.length > 0);
 }
 

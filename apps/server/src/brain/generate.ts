@@ -1,6 +1,4 @@
-import type { Frame, HistoryTurn, Mode, Stance } from '@mirror/contracts';
 import type { ChatMessage, DeepSeek, Tool, ToolCall } from '../llm/deepseek';
-import { buildGenerateSystemPrompt, buildGenerateUserPrompt } from './prompts';
 
 // 结尾「是否等回应」标签：生成时顺带输出 [[AWAITS:1]]（等对方回应/提问）或 [[AWAITS:0]]（纯陈述）。
 // 模型漏打标签时 awaits 返回 null，调用方回退正则（/[？?]/）兜底。
@@ -10,45 +8,6 @@ export function extractAwaits(text: string): { clean: string; awaits: boolean | 
   const m = AWAITS_RE.exec(text);
   if (!m) return { clean: text, awaits: null };
   return { clean: text.replace(AWAITS_RE, '').trim(), awaits: m[1] === '1' };
-}
-
-// call2：生成（流式）。返回按句切分的文本；情绪由后端从 affect 推导，不在此处理。
-export async function generateText(
-  llm: DeepSeek,
-  model: string,
-  input: {
-    text: string;
-    history: HistoryTurn[];
-    mode: Mode;
-    stance: Stance;
-    personaSystemPrompt: string;
-    frame?: Frame;        // 交互框架：coach 时注入 GROW 块（eval 路径也要走教练）
-    coachInvite?: boolean; // 注入温柔邀入块
-    celebrate?: boolean;  // 刚解决退出教练：注入庆祝块
-  },
-): Promise<string[]> {
-  const system = buildGenerateSystemPrompt(input);
-  const user = buildGenerateUserPrompt(input.text, input.history);
-
-  let full = '';
-  for await (const delta of llm.stream(
-    [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-    { model, temperature: 0.6 },
-  )) {
-    full += delta;
-  }
-  return splitSentences(full);
-}
-
-// 按句切分（在句末标点后切，保留标点）。
-export function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[。！？!?])/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
 }
 
 const SENTENCE_END = '。！？!?';
@@ -63,7 +22,6 @@ function findSentenceEnd(s: string): number {
 
 // 流式出句：LLM 边生成边把「已完成的句子」yield 出去，让 TTS 尽早开跑（砍首字延迟）。
 // 剩余的不完整尾巴（可能没有句末标点）在流结束时作为最后一句 yield。
-// 接受完整 messages（含 ReAct 循环里累积的 tool 消息），比 streamSegments 更通用。
 export async function* streamMessages(
   llm: DeepSeek,
   model: string,
@@ -121,19 +79,6 @@ export async function* streamMessagesWithTools(
     yield { kind: 'sentence', text: rest };
   }
   if (calls.length && !emitted) yield { kind: 'tool_calls', calls };
-}
-
-// 兼容旧调用方（run-demo / eval）：system+user 两段式。
-export async function* streamSegments(
-  llm: DeepSeek,
-  model: string,
-  systemPrompt: string,
-  userPrompt: string,
-): AsyncGenerator<string> {
-  yield* streamMessages(llm, model, [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ]);
 }
 
 // 主动发话（开场白 / 静默关怀）：没有用户输入，只靠 system prompt 出一句，返回裸文本。

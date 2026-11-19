@@ -94,6 +94,12 @@ mirror/
 ├── apps/
 │   ├── client/            # Next.js 前端：通话 UI + 采集 + 播放 + 前端 VAD
 │   ├── server/            # Node 后端：L1/L2/L3/L4/L5 热路径 + 脚本 + 测试
+│   │   └── src/
+│   │       ├── server.ts        # 入口：装配配置/存储 → router + CallSession + 做梦巩固
+│   │       ├── session.ts       # 单通通话编排（ASR→L3→TTS + 主动发话状态机 + 抢话）
+│   │       ├── router.ts        # HTTP 路由（通讯录/记忆库/导出/信令）
+│   │       ├── greetingCache.ts # 招呼语磁盘缓存（序列化 + 落盘）
+│   │       └── brain/ store/ speech/ rtc/ llm/ persona/ obs/ scripts/
 │   └── desktop/           # Electron 桌面版：内嵌 PG + 语音 + 英文模式 + 便携 exe
 ├── packages/
 │   └── contracts/         # 共享类型 + 接口契约（"缝"的物理位置）

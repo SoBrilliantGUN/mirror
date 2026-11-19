@@ -38,7 +38,7 @@ function parseMoveToPersona(raw: string, total: number): Set<number> {
   return idx;
 }
 
-const KINDS: MemoryKind[] = ['constraint', 'fact', 'preference', 'episodic', 'persona'];
+const KINDS: MemoryKind[] = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
 
 async function main() {
   loadDotEnv();
@@ -84,7 +84,7 @@ async function main() {
       if (!f) continue;
       try {
         // write(kind='persona') 自带近义去重（0.9）：命中已有 persona 就并入、不新建；再归档旧 fact。
-        await memory.write(characterId, userId, { kind: 'persona', content: f.content });
+        await memory.write(characterId, userId, { kind: 'profile', content: f.content });
         await memory.remove(characterId, userId, f.id);
         moved++;
         console.log(`  [move] fact → persona：${f.content}`);
@@ -96,7 +96,7 @@ async function main() {
 
     // 2) 做梦巩固：合并近重复 + 清矛盾 + 抽象升级（复用 dreamOnMemory，阈值已调 0.9）
     const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, characterId });
-    console.log(`[${characterId}][dream] 抽象 fact=${r.abstractedFacts} persona=${r.abstractedPersona} | 合并=${r.merged} | 清矛盾=${r.resolved}`);
+    console.log(`[${characterId}][dream] 抽象 fact=${r.abstractedFacts} profile=${r.abstractedProfile} | 合并=${r.merged} | 清矛盾=${r.resolved}`);
 
     await snapshot('AFTER');
     console.log('');

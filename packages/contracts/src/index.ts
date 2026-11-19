@@ -30,12 +30,6 @@ export type CoachCue = {
 // 4 个方向，由对方情绪驱动（通用镜像），再叠加人设底色 voiceTint。
 export type EmotionTag = 'warm' | 'tender' | 'steady' | 'natural';
 
-export type VoiceConfig = {
-  speed: number;      // 语速倍率 0.7~1.1
-  energy: number;     // 能量/响度 0.7~1.1
-  pauseMore: boolean; // careful 模式句间停顿更长
-};
-
 export type SafetyAction = {
   level: 0 | 1 | 2;          // 0 无 / 1 黄旗（被动意念·持续低落）/ 2 红旗（计划·手段·即时危险）
   action: 'none' | 'refer';  // 已按 episode 去抖：首次或升级时 refer，episode 内为 none
@@ -67,7 +61,6 @@ export type TurnResult = {
   stance: Stance;
   emotion: EmotionTag;      // 本轮回应情绪（由对方情绪驱动）
   segmentEmotions?: EmotionTag[]; // 逐句情绪（B2：与 segments 等长，生成后分类；缺省回退 emotion）
-  voiceConfig: VoiceConfig;
   segments: string[];       // 已按句切分
   safetyAction: SafetyAction;      // 危机（自伤/轻生）
   dependence: DependenceAction;    // 过度依赖（话术层设界，不转介）
@@ -87,19 +80,6 @@ export type MoodState = {
   valence: number;
   arousal: number;
   dominance: number;
-  recent: Affect[];   // 最近几个 affect 点，用于打分连贯 + 轨迹
-};
-
-// —— 上下文（ContextProvider 注入，第一片返回空）——
-export type HistoryTurn = {
-  role: 'user' | 'agent';
-  text: string;
-};
-
-export type Context = {
-  history: HistoryTurn[];      // 最近 N 轮
-  mood: MoodState | null;      // 心境轨迹
-  // 未来：记忆 / MBTI / 时间各自往这里注入
 };
 
 // —— 角色卡（L6）——
@@ -115,10 +95,6 @@ export type Persona = {
 };
 
 // —— 接口（缝）。第一片：stub / 空实现；未来各自填。 ——
-export interface ContextProvider {
-  get(userId: string): Promise<Context>;
-}
-
 export interface SafetyGuard {
   check(text: string, signals?: DependenceSignals): Promise<SafetyCheck>;
 }
@@ -126,8 +102,9 @@ export interface SafetyGuard {
 // —— 长期记忆（五型，参考 kima 的 CopilotMemory 分类；embedding + pgvector 混合召回）——
 // constraint = 硬规则/红线（无条件在场）；fact = 稳定事实（entity_id 覆盖）；
 // preference = 偏好/软规则；episodic = 带时间锚点的事件（默认 30 天衰减）；
-// persona = 人设（对方的身份基本信息 + 稳定特质 + 对对方的高层洞察，强制在场，单独成型）。
-export type MemoryKind = 'constraint' | 'fact' | 'preference' | 'episodic' | 'persona';
+// profile = 人设（对方的身份基本信息 + 稳定特质 + 对对方的高层洞察，强制在场，单独成型）。
+// 注：与陪伴者实体 `Persona`（角色）无关——这是「关于用户」的记忆类型。
+export type MemoryKind = 'constraint' | 'fact' | 'preference' | 'episodic' | 'profile';
 
 export type Memory = {
   id: string;
@@ -149,10 +126,10 @@ export type Memory = {
 // 好奇心覆盖率的一行：某维度下某子槽的已知事实数（aspect 为 null = 只归了维度、没归子槽）。
 export type CoverageEntry = { dimension: string; aspect: string | null; count: number };
 
-// 分路召回结果：constraint + persona 硬召回全量（强制在场）；其余三型走混合召回（按相似度过滤）。
+// 分路召回结果：constraint + profile 硬召回全量（强制在场）；其余三型走混合召回（按相似度过滤）。
 export type RecalledMemories = {
   constraint: Memory[];
-  persona: Memory[];
+  profile: Memory[];
   fact: Memory[];
   preference: Memory[];
   episodic: Memory[];
@@ -276,53 +253,11 @@ export interface GrowthGoalStore {
 }
 
 // ============================================================
-// L2 语音流水线（ASR / TTS / 非言语发声）
+// L2 语音流水线（非言语发声）
 // ============================================================
 
-export type AudioChunk = Uint8Array;
-export type AudioFormat = 'pcm_16000' | 'mp3';
-
-// —— ASR ——
-export type Transcript = {
-  text: string;
-  isFinal: boolean; // interim = false，final = true
-};
-
-export type ASROptions = {
-  language?: string; // 如 'zh' / 'en'
-};
-
-export interface STTStream {
-  sendAudio(chunk: AudioChunk): void; // 喂 PCM（linear16 16k 单声道）
-  finish(): void;                     // 标记说完，触发 final
-  close(): void;                      // 强制关闭
-}
-
-export interface SpeechToText {
-  open(options: ASROptions, onTranscript: (t: Transcript) => void): Promise<STTStream>;
-}
-
-// —— TTS ——
-export type TTSRequest = {
-  text: string;
-  voiceId: string;          // 音色（区分人物）
-  voiceConfig: VoiceConfig; // speed/energy/pauseMore
-  emotion: EmotionTag;      // 这句的情绪
-  format?: AudioFormat;     // 输出格式，默认 pcm_16000
-};
-
-export interface TextToSpeech {
-  // 流式合成；signal abort = 打断（立即停止流）。被中断时抛 AbortError。
-  stream(req: TTSRequest, signal?: AbortSignal): AsyncGenerator<AudioChunk>;
-}
-
-// —— 非言语发声（哭/笑）：已实现为服务端 `NlsSoundEventDetector`（Node WS 客户端）→ 阿里云 NLS 云端声音事件检测 ——
+// 非言语发声（哭/笑）：已实现为服务端 `NlsSoundEventDetector`（Node WS 客户端）→ 阿里云 NLS 云端声音事件检测。
 export type VocalizationEvent = { type: 'laugh' | 'cry'; at: number; confidence?: number };
-
-export interface VocalizationEventDetector {
-  // 已由 apps/server/src/speech/nlsSoundEvent.ts 落地；此接口留作换供应商的缝。
-  detect?(chunk: AudioChunk): void;
-}
 
 // —— 人设增补（陪伴者底座之外的软细节，永久固化 + 提及驱动衰减）——
 // 数据：每条 = 陪伴者在对话中自然说出的、关于他自己的软细节（爱好/口味/小回忆/习惯）。

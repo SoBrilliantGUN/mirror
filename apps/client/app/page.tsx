@@ -11,11 +11,11 @@ type Mem = { id: string; kind: string; content: string; createdAt: string };
 type TranscriptRow = { role: 'user' | 'agent'; text: string };
 
 const KIND_LABEL: Record<string, string> = {
-  fact: '事实', preference: '偏好', episodic: '情节', insight: '人设', persona: '人设', constraint: '约束',
+  fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
 };
 // 笔记本展示的四类（constraint 是内部红线，不进「关于对方」的记忆面板）
-const SHOW_KINDS = ['fact', 'preference', 'episodic', 'insight', 'persona'];
-const chipClass = (k: string) => (k === 'insight' || k === 'persona' ? 'persona' : k);
+const SHOW_KINDS = ['fact', 'preference', 'episodic', 'profile'];
+const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
 
 const CallIcon = ({ size = 18 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">

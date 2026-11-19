@@ -11,9 +11,9 @@ import type { Embedder } from '../llm/embedding';
 // 完全隔离——程书衡不会读到只告诉沈知遥的事。character_id 用 persona.name（PERSONAS 主键）。
 
 const EPISODIC_TTL_DAYS = 30;
-// persona 去重阈值：近重复人设/洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
+// profile 去重阈值：近重复人设/洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
 // 实测近重复（措辞微变）≈0.99+，不同洞察 ≈0.63~0.72，取 0.9 留足裕量。
-const PERSONA_DUP_SIM = 0.9;
+const PROFILE_DUP_SIM = 0.9;
 
 // 激活值（遗忘公式，对齐 kima `services/copilot.py` 的 compute_activation）：
 //   activation = exp(-age/ttl) + log(1+access_count)·ACCESS_LOG_FACTOR +（近 RECENCY_WINDOW 天内被召回 ? RECENCY_BONUS : 0）
@@ -259,10 +259,10 @@ export function createMemoryStore(
     return excess.length;
   };
 
-  // persona 去重：反思可能反复生成同一条人设/洞察（内容精确相同，或措辞微变的语义重复）。
+  // profile 去重：反思可能反复生成同一条人设/洞察（内容精确相同，或措辞微变的语义重复）。
   // emb 为空时只按 content 精确查重；有 emb 时再按余弦相似度近义查重（复用 write 里已算好的向量）。
   // 命中返回已存在的活跃条，否则 null。
-  const findDuplicatePersona = async (
+  const findDuplicateProfile = async (
     characterId: string,
     userId: string,
     content: string,
@@ -271,7 +271,7 @@ export function createMemoryStore(
     if (emb === null) {
       const { rows } = await pool.query<MemoryRow>(
         `SELECT * FROM memories
-          WHERE character_id = $1 AND user_id = $2 AND kind = 'persona' AND content = $3 AND ${ACTIVE}
+          WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND content = $3 AND ${ACTIVE}
           LIMIT 1`,
         [characterId, userId, content],
       );
@@ -280,12 +280,12 @@ export function createMemoryStore(
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind = 'persona' AND embedding IS NOT NULL AND ${ACTIVE}
+        WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT 1`,
       [characterId, userId, toVectorLiteral(emb)],
     );
-    if (rows[0] && rows[0].score >= PERSONA_DUP_SIM) {
+    if (rows[0] && rows[0].score >= PROFILE_DUP_SIM) {
       return getById(rows[0].id);
     }
     return null;
@@ -353,14 +353,14 @@ export function createMemoryStore(
   return {
     async recall(characterId, userId, query): Promise<RecalledMemories> {
       const qvec = (await embedder.embed([query]))[0];
-      const [constraint, persona, preference, fact, episodic] = await Promise.all([
+      const [constraint, profile, preference, fact, episodic] = await Promise.all([
         listActive(characterId, userId, 'constraint'),
-        listActive(characterId, userId, 'persona'), // persona 强制在场：全量召回（不走向量，像 constraint）
+        listActive(characterId, userId, 'profile'), // profile 强制在场：全量召回（不走向量，像 constraint）
         hybridRecall(characterId, userId, 'preference', query, qvec),
         hybridRecall(characterId, userId, 'fact', query, qvec),
         hybridRecall(characterId, userId, 'episodic', query, qvec),
       ]);
-      return { constraint, fact, preference, episodic, persona };
+      return { constraint, fact, preference, episodic, profile };
     },
 
     async search(characterId, userId, query, kind, topK = recallTopK): Promise<Memory[]> {
@@ -371,15 +371,15 @@ export function createMemoryStore(
     },
 
     async write(characterId, userId, { kind, content, entityId = null, dimension = null, aspect = null, anchor = null }): Promise<Memory> {
-      // persona 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
-      if (kind === 'persona') {
-        const dup = await findDuplicatePersona(characterId, userId, content, null);
+      // profile 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
+      if (kind === 'profile') {
+        const dup = await findDuplicateProfile(characterId, userId, content, null);
         if (dup) return dup;
       }
       const [emb] = await embedder.embed([content]);
-      // persona 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的人设/洞察重复入库。
-      if (kind === 'persona') {
-        const dup = await findDuplicatePersona(characterId, userId, content, emb);
+      // profile 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的人设/洞察重复入库。
+      if (kind === 'profile') {
+        const dup = await findDuplicateProfile(characterId, userId, content, emb);
         if (dup) return dup;
       }
       const id = randomUUID();

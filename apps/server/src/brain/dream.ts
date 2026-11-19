@@ -2,6 +2,7 @@ import type { MemoryKind, MemoryStore } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
 import type { Embedder } from '../llm/embedding';
 import { reflectOnMemory } from './reflect';
+import { parseJsonish } from './parse';
 
 // 做梦（空闲时自动巩固记忆）——三步：
 // ① 抽象升级：episodic → fact + persona（复用 reflect 的高层综合）；
@@ -26,7 +27,7 @@ function cosine(a: number[], b: number[]): number {
 
 export type DreamResult = {
   abstractedFacts: number;
-  abstractedPersona: number;
+  abstractedProfile: number;
   merged: number;
   resolved: number;
 };
@@ -43,18 +44,18 @@ export async function dreamOnMemory(deps: {
 
   // ① 抽象升级
   let abstractedFacts = 0;
-  let abstractedPersona = 0;
+  let abstractedProfile = 0;
   try {
     const r = await reflectOnMemory({ llm, model, store, userId, characterId });
     abstractedFacts = r.factsWritten;
-    abstractedPersona = r.personaWritten;
+    abstractedProfile = r.profileWritten;
   } catch (e) {
     console.warn('[dream] 抽象升级失败：', e);
   }
 
   // ② 合并去重（确定性，逐型）
   let merged = 0;
-  for (const kind of ['fact', 'preference', 'episodic', 'persona'] as MemoryKind[]) {
+  for (const kind of ['fact', 'preference', 'episodic', 'profile'] as MemoryKind[]) {
     try {
       const list = await store.listAll(characterId, userId, { kind });
       if (list.length < 2) continue;
@@ -83,7 +84,7 @@ export async function dreamOnMemory(deps: {
     console.warn('[dream] 清理矛盾失败：', e);
   }
 
-  return { abstractedFacts, abstractedPersona, merged, resolved };
+  return { abstractedFacts, abstractedProfile, merged, resolved };
 }
 
 async function resolveContradictions(deps: {
@@ -95,7 +96,7 @@ async function resolveContradictions(deps: {
 }): Promise<number> {
   const { llm, model, store, userId, characterId } = deps;
   const all: { id: string; kind: MemoryKind; content: string }[] = [];
-  for (const kind of ['fact', 'preference', 'persona'] as MemoryKind[]) {
+  for (const kind of ['fact', 'preference', 'profile'] as MemoryKind[]) {
     const list = await store.listAll(characterId, userId, { kind });
     all.push(...list.map((m) => ({ id: m.id, kind: m.kind, content: m.content })));
   }
@@ -123,17 +124,8 @@ async function resolveContradictions(deps: {
 }
 
 function parseSupersede(raw: string): number[] {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = fence ? fence[1].trim() : raw;
-  const brace = jsonStr.match(/\{[\s\S]*\}/);
-  let obj: unknown;
-  try {
-    obj = JSON.parse(brace ? brace[0] : jsonStr);
-  } catch {
-    return [];
-  }
-  const arr = Array.isArray((obj as Record<string, unknown>).supersede)
-    ? ((obj as Record<string, unknown>).supersede as unknown[])
-    : [];
+  const o = parseJsonish(raw);
+  if (!o) return [];
+  const arr = Array.isArray(o.supersede) ? (o.supersede as unknown[]) : [];
   return arr.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
 }
