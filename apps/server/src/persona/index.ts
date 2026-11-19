@@ -27,9 +27,19 @@ const VOICE_ENV_KEY: Record<string, string> = {
   '苏明悦': 'COSYVOICE_VOICE_SMY',
 };
 
+// 英文模式音色（language_hints:['en'] 建模，说英文无口音）。未配则回落中文音色（带口音但能说）。
+const VOICE_ENV_KEY_EN: Record<string, string> = {
+  '程书衡': 'COSYVOICE_VOICE_EN',
+  '沈知遥': 'COSYVOICE_VOICE_SZY_EN',
+  '沈砚秋': 'COSYVOICE_VOICE_SYQ_EN',
+  '苏明悦': 'COSYVOICE_VOICE_SMY_EN',
+};
+
 // 取该陪伴者的实际音色 ID；没配的回落 fallback（默认程书衡音色），调用方负责 warn。
-export function resolveVoice(name: string, fallback: string): string {
+export function resolveVoice(name: string, fallback: string, lang: 'zh' | 'en' = 'zh'): string {
+  const enKey = lang === 'en' ? VOICE_ENV_KEY_EN[name] : undefined;
+  if (enKey && process.env[enKey]) return process.env[enKey]!;
   const key = VOICE_ENV_KEY[name];
-  if (!key) return fallback;
-  return process.env[key] || fallback;
+  if (key && process.env[key]) return process.env[key]!;
+  return fallback;
 }

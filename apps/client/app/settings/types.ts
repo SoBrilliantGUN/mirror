@@ -12,6 +12,10 @@ export interface Settings {
   cosyvoiceVoiceSzy?: string;
   cosyvoiceVoiceSyq?: string;
   cosyvoiceVoiceSmy?: string;
+  cosyvoiceVoiceEn?: string;
+  cosyvoiceVoiceSzyEn?: string;
+  cosyvoiceVoiceSyqEn?: string;
+  cosyvoiceVoiceSmyEn?: string;
   bochaApiKey?: string;
   nlsEnabled?: boolean;
   nlsAppKey?: string;

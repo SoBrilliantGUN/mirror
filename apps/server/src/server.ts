@@ -599,7 +599,7 @@ export async function main() {
       console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
       await obs.span('tts', () => synthesizeWithRetry({
         model: cfg.cosyvoiceModel,
-        voice: resolveVoice(persona.name, cfg.cosyvoiceVoice),
+        voice: resolveVoice(persona.name, cfg.cosyvoiceVoice, lang),
         instruction: buildInstruction(segEmotion, persona.voiceTint) + tailHint(clean),
         text: clean,
         rate: segRate,
@@ -654,7 +654,7 @@ export async function main() {
           wsUrl: cfg.dashscopeWsUrl,
           apiKey: cfg.dashscopeApiKey,
           model: cfg.cosyvoiceModel,
-          voice: resolveVoice(persona.name, cfg.cosyvoiceVoice),
+          voice: resolveVoice(persona.name, cfg.cosyvoiceVoice, lang),
           instruction: buildInstruction('natural', persona.voiceTint),
           text: pickFiller(),
           rate: persona.rate ?? 1.0,
@@ -987,7 +987,7 @@ export async function main() {
       obs.setOutput(seg);
       await obs.span('tts', () => synthesizeWithRetry({
         model: cfg.cosyvoiceModel,
-        voice: resolveVoice(persona.name, cfg.cosyvoiceVoice),
+        voice: resolveVoice(persona.name, cfg.cosyvoiceVoice, lang),
         instruction: buildInstruction('natural', persona.voiceTint) + tailHint(seg),
         text: seg,
         rate: persona.rate ?? 1.0,
@@ -1195,12 +1195,12 @@ export async function main() {
         personaMatcher = details.length ? createPersonaMatcher(embedder, details) : null;
         if (details.length) console.log(`[persona] ${persona.name} 启用渐进式记忆：共 ${details.length} 条详情待命中加载`);
         // 未配专属音色时提示：这位暂时会回落到程书衡的音色（共用一张嘴，明显违和）
-        if (resolveVoice(persona.name, cfg.cosyvoiceVoice) === cfg.cosyvoiceVoice && persona.name !== '程书衡') {
+        if (resolveVoice(persona.name, cfg.cosyvoiceVoice, lang) === cfg.cosyvoiceVoice && persona.name !== '程书衡') {
           console.warn(`[voice] ${persona.name} 尚未配置专属音色，暂用程书衡音色；用 npm run enroll-voices 建模后填 env。`);
         }
         // 副语言 backchannel：复位 + 切音色 + 预生成片段（懒、按音色缓存）。
         backchannel.reset();
-        const backVoice = resolveVoice(persona.name, cfg.cosyvoiceVoice);
+        const backVoice = resolveVoice(persona.name, cfg.cosyvoiceVoice, lang);
         backchannel.setVoice(backVoice);
         if (!backchannel.hasClips(backVoice)) {
           preloadBackchannelClips(backVoice, persona.name).catch((e) =>
@@ -1381,7 +1381,7 @@ export async function main() {
         res.end(JSON.stringify({ sdp: answer }));
         // 一联通就打招呼：优先放缓存的招呼语（秒回）。启动时已预热，这里再 await 一次兜底，
         // 确保第一句话一定是缓存片段（不吃 LLM 空响应的亏）；只有预热失败才回退 LLM 生成。
-        const greetVoice = resolveVoice(persona.name, cfg.cosyvoiceVoice);
+        const greetVoice = resolveVoice(persona.name, cfg.cosyvoiceVoice, lang);
         idleFired = true; // 招呼算一次主动发话，本轮静默不再重复
         try {
           await preloadGreetingClips(greetVoice, persona.name, persona.voiceTint, persona.rate ?? 1.0, lang);

@@ -18,6 +18,10 @@ export interface Settings {
   cosyvoiceVoiceSzy?: string;       // 沈知遥音色
   cosyvoiceVoiceSyq?: string;       // 沈砚秋音色
   cosyvoiceVoiceSmy?: string;       // 苏明悦音色
+  cosyvoiceVoiceEn?: string;        // 程书衡英文音色
+  cosyvoiceVoiceSzyEn?: string;     // 沈知遥英文音色
+  cosyvoiceVoiceSyqEn?: string;     // 沈砚秋英文音色
+  cosyvoiceVoiceSmyEn?: string;     // 苏明悦英文音色
   bochaApiKey?: string;             // 联网搜索
   nlsEnabled?: boolean;             // 哭/笑检测总开关
   nlsAppKey?: string;
@@ -97,6 +101,10 @@ export function settingsToEnv(s: Settings): Record<string, string> {
   if (s.cosyvoiceVoiceSzy) env.COSYVOICE_VOICE_SZY = s.cosyvoiceVoiceSzy;
   if (s.cosyvoiceVoiceSyq) env.COSYVOICE_VOICE_SYQ = s.cosyvoiceVoiceSyq;
   if (s.cosyvoiceVoiceSmy) env.COSYVOICE_VOICE_SMY = s.cosyvoiceVoiceSmy;
+  if (s.cosyvoiceVoiceEn) env.COSYVOICE_VOICE_EN = s.cosyvoiceVoiceEn;
+  if (s.cosyvoiceVoiceSzyEn) env.COSYVOICE_VOICE_SZY_EN = s.cosyvoiceVoiceSzyEn;
+  if (s.cosyvoiceVoiceSyqEn) env.COSYVOICE_VOICE_SYQ_EN = s.cosyvoiceVoiceSyqEn;
+  if (s.cosyvoiceVoiceSmyEn) env.COSYVOICE_VOICE_SMY_EN = s.cosyvoiceVoiceSmyEn;
   if (s.bochaApiKey) env.BOCHA_API_KEY = s.bochaApiKey;
   if (s.nlsEnabled === false) env.NLS_ENABLED = 'false';
   if (s.nlsAppKey) env.NLS_APPKEY = s.nlsAppKey;

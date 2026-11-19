@@ -86,6 +86,11 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               {f('cosyvoiceVoiceSzy', '沈知遥（女）')}
               {f('cosyvoiceVoiceSyq', '沈砚秋（男）')}
               {f('cosyvoiceVoiceSmy', '苏明悦（女）')}
+              <h5 className="settings-h5">英文音色 ID（练英语用，未填则英文回落中文音色·带口音）</h5>
+              {f('cosyvoiceVoiceEn', '程书衡 英文（男）')}
+              {f('cosyvoiceVoiceSzyEn', '沈知遥 英文（女）')}
+              {f('cosyvoiceVoiceSyqEn', '沈砚秋 英文（男）')}
+              {f('cosyvoiceVoiceSmyEn', '苏明悦 英文（女）')}
 
               <h5 className="settings-h5">联网搜索（博查，可选）</h5>
               {f('bochaApiKey', 'Bocha API Key', { secret: true })}

@@ -3,18 +3,6 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { appendFileSync, mkdirSync } from 'node:fs';
-
-// 诊断日志：写到 userData/debug.log，便于排查便携版（其 stdout 抓不到）。
-function dlog(msg: string): void {
-  try {
-    const dir = join(process.env.APPDATA ?? '', 'mirror');
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, 'debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
-  } catch {
-    /* ignore */
-  }
-}
 import { loadSettings, saveSettings, settingsToEnv, type Settings } from './settings.js';
 import { startPostgres, stopPostgres } from './pg.js';
 import { startStaticServer } from './staticServer.js';
@@ -61,13 +49,13 @@ function stopServerChild(): void {
 }
 
 async function boot(): Promise<void> {
-  dlog('boot 开始');
+  console.log('boot 开始');
   let databaseUrl = '';
   try {
     databaseUrl = await startPostgres();
-    dlog('PG 启动成功：' + databaseUrl);
+    console.log('PG 启动成功：' + databaseUrl);
   } catch (e) {
-    dlog('PG 启动失败：' + String(e));
+    console.log('PG 启动失败：' + String(e));
     console.error('[pg] 内嵌 Postgres 启动失败：', e);
   }
 
@@ -79,13 +67,13 @@ async function boot(): Promise<void> {
   env.ICE_HOST_ADDRESS = '127.0.0.1';
   env.MIRROR_SKIP_DOTENV = '1'; // 桌面版只用注入的 key，不读仓库 .env
 
-  dlog('server 子进程启动中（execPath=' + process.execPath + '）');
+  console.log('server 子进程启动中（execPath=' + process.execPath + '）');
   startServerChild(env);
   // renderer 在 apps/desktop/renderer（dist/ 的上一级），与 dist/ 平级。
   await startStaticServer(join(__dirname, '..', 'renderer'), CLIENT_PORT);
-  dlog('静态服务已起');
+  console.log('静态服务已起');
   await createWindow();
-  dlog('窗口已创建');
+  console.log('窗口已创建');
 }
 
 function createWindow(): Promise<void> {
