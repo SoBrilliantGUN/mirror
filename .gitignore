@@ -28,3 +28,9 @@ apps/server/.greetings-cache/
 
 # 节假日联网缓存（重启复用，避免重复联网查）
 apps/server/.holiday-cache.json
+
+# 桌面版构建产物（Next 静态导出 / esbuild 输出 / 复制进桌面的 renderer / electron-builder 输出）
+apps/client/out/
+apps/desktop/dist/
+apps/desktop/renderer/
+apps/desktop/release/

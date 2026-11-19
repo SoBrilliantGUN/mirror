@@ -36,7 +36,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id text NOT NULL,
       character_id text NOT NULL,        -- 哪个陪伴者记得的（按人物隔离用户画像；键 = persona.name）
-      kind text NOT NULL,                -- constraint | fact | preference | episodic | insight
+      kind text NOT NULL,                -- constraint | fact | preference | episodic | persona
       content text NOT NULL,
       entity_id text,                    -- fact 的稳定实体键（如 user:job），空则不按实体覆盖
       embedding vector(1024),            -- 与 EMBEDDING_DIM 对齐（默认 1024）
@@ -53,7 +53,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
 
   // 迁移：老库的 memories 只有 user_id（所有人物共享一份画像）。补 character_id 并把存量回填到默认人物程书衡。
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS character_id text NOT NULL DEFAULT '程书衡'`);
-  // 好奇心维度（原生家庭/职业/…），fact/preference/episodic 归入，constraint/insight 为空。
+  // 好奇心维度（原生家庭/职业/…），fact/preference/episodic 归入，constraint/persona 为空。
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS dimension text`);
   // 维度下的子槽（原生家庭→母亲等），边级延伸用；没有则空。
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS aspect text`);
@@ -61,6 +61,9 @@ export async function ensureSchema(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_kind text`);
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_at date`);
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_rule jsonb`);
+
+  // 迁移：insight 并入 persona（记忆四类重构：事实/偏好/情节/人设）。
+  await pool.query(`UPDATE memories SET kind = 'persona' WHERE kind = 'insight'`);
 
   // 向量检索（HNSW 近似最近邻，只索引有向量的行）+ 按人物/用户/类型过滤 + 词法相似度
   await pool.query(`
@@ -114,4 +117,53 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS growth_goals_char_user_idx ON growth_goals (character_id, user_id, status)`);
+
+  // 近 3 天已问过的问题（防重复提问）：每次提问记录一条，按 character/user 隔离。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asked_questions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      character_id text NOT NULL,
+      question text NOT NULL,
+      asked_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS asked_questions_char_user_time_idx ON asked_questions (character_id, user_id, asked_at DESC)`);
+
+  // 最近对话概要（跨通话的「最近聊过什么」）：每次通话结束记一条话题脉络，按 character/user 隔离。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS conversation_summaries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      character_id text NOT NULL,
+      summary text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS conversation_summaries_char_user_time_idx ON conversation_summaries (character_id, user_id, created_at DESC)`);
+
+  // 逐轮聊天记录（导出/优化用）：正文 + 每轮元数据（情绪/声学/哭笑事件/延迟/框架/是否问句）。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS call_turns (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      character_id text NOT NULL,
+      session_id uuid,
+      role text NOT NULL,                 -- user | agent
+      text text NOT NULL,
+      turn_index int NOT NULL,
+      emotion text,                       -- agent 本轮情绪（warm/tender/steady/natural）
+      affect jsonb,                       -- user 本轮 affect（valence/arousal/dominance/incongruence）
+      acoustic jsonb,                     -- user 本轮声学特征（rateZ/pitchZ/loudnessZ/pauseZ）
+      vocals jsonb,                       -- 本轮哭/笑事件
+      recalled jsonb,                     -- agent 本轮实际注入的记忆（id/kind/content）
+      latency_ms int,                     -- user 说完→AI 开口 延迟
+      frame text,                         -- friend | coach
+      mode text,                          -- casual | careful
+      stance text,                        -- guide | accompany
+      asked boolean,                      -- agent 这句是否在等回应
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS call_turns_char_user_time_idx ON call_turns (character_id, user_id, created_at DESC)`);
 }

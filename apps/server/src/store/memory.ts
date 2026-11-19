@@ -11,9 +11,9 @@ import type { Embedder } from '../llm/embedding';
 // 完全隔离——程书衡不会读到只告诉沈知遥的事。character_id 用 persona.name（PERSONAS 主键）。
 
 const EPISODIC_TTL_DAYS = 30;
-// insight 去重阈值：近重复洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
+// persona 去重阈值：近重复人设/洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
 // 实测近重复（措辞微变）≈0.99+，不同洞察 ≈0.63~0.72，取 0.9 留足裕量。
-const INSIGHT_DUP_SIM = 0.9;
+const PERSONA_DUP_SIM = 0.9;
 
 // 激活值（遗忘公式，对齐 kima `services/copilot.py` 的 compute_activation）：
 //   activation = exp(-age/ttl) + log(1+access_count)·ACCESS_LOG_FACTOR +（近 RECENCY_WINDOW 天内被召回 ? RECENCY_BONUS : 0）
@@ -259,10 +259,10 @@ export function createMemoryStore(
     return excess.length;
   };
 
-  // insight 去重：反思可能反复生成同一条洞察（内容精确相同，或措辞微变的语义重复）。
+  // persona 去重：反思可能反复生成同一条人设/洞察（内容精确相同，或措辞微变的语义重复）。
   // emb 为空时只按 content 精确查重；有 emb 时再按余弦相似度近义查重（复用 write 里已算好的向量）。
   // 命中返回已存在的活跃条，否则 null。
-  const findDuplicateInsight = async (
+  const findDuplicatePersona = async (
     characterId: string,
     userId: string,
     content: string,
@@ -271,7 +271,7 @@ export function createMemoryStore(
     if (emb === null) {
       const { rows } = await pool.query<MemoryRow>(
         `SELECT * FROM memories
-          WHERE character_id = $1 AND user_id = $2 AND kind = 'insight' AND content = $3 AND ${ACTIVE}
+          WHERE character_id = $1 AND user_id = $2 AND kind = 'persona' AND content = $3 AND ${ACTIVE}
           LIMIT 1`,
         [characterId, userId, content],
       );
@@ -280,28 +280,87 @@ export function createMemoryStore(
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind = 'insight' AND embedding IS NOT NULL AND ${ACTIVE}
+        WHERE character_id = $1 AND user_id = $2 AND kind = 'persona' AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT 1`,
       [characterId, userId, toVectorLiteral(emb)],
     );
-    if (rows[0] && rows[0].score >= INSIGHT_DUP_SIM) {
+    if (rows[0] && rows[0].score >= PERSONA_DUP_SIM) {
       return getById(rows[0].id);
     }
     return null;
   };
 
+  // 笔记本/记忆库：跨型列出未归档记忆（可选 kind 过滤、since 起点），按创建时间倒序。
+  // 不做 episodic 软激活过滤——管理面板要看到全部（含"软遗忘"的），让用户能手动清理。
+  const listAll = async (
+    characterId: string,
+    userId: string,
+    opts: { kind?: MemoryKind; since?: string } = {},
+  ): Promise<Memory[]> => {
+    const conds = [`character_id = $1`, `user_id = $2`, ACTIVE];
+    const params: unknown[] = [characterId, userId];
+    if (opts.kind) {
+      params.push(opts.kind);
+      conds.push(`kind = $${params.length}`);
+    }
+    if (opts.since) {
+      params.push(opts.since);
+      conds.push(`created_at >= $${params.length}`);
+    }
+    const { rows } = await pool.query<MemoryRow>(
+      `SELECT * FROM memories WHERE ${conds.join(' AND ')} ORDER BY created_at DESC`,
+      params,
+    );
+    return rows.map(toMemory);
+  };
+
+  // 笔记本编辑：就地改 content / kind（同 id，不新建）。找不到（或不属于该用户/人物）返回 null。
+  const updateMemory = async (
+    characterId: string,
+    userId: string,
+    id: string,
+    patch: { content?: string; kind?: MemoryKind },
+  ): Promise<Memory | null> => {
+    const sets: string[] = [];
+    const params: unknown[] = [id, characterId, userId];
+    if (patch.content !== undefined) {
+      params.push(patch.content);
+      sets.push(`content = $${params.length}`);
+    }
+    if (patch.kind !== undefined) {
+      params.push(patch.kind);
+      sets.push(`kind = $${params.length}`);
+    }
+    if (sets.length === 0) return getById(id);
+    const { rows } = await pool.query<MemoryRow>(
+      `UPDATE memories SET ${sets.join(', ')} WHERE id = $1 AND character_id = $2 AND user_id = $3 RETURNING *`,
+      params,
+    );
+    return rows[0] ? toMemory(rows[0]) : null;
+  };
+
+  // 笔记本删除：软删除（superseded，可审计不硬删）。返回归档条数（0 = 不存在或已删）。
+  const removeMemory = async (characterId: string, userId: string, id: string): Promise<number> => {
+    const { rowCount } = await pool.query(
+      `UPDATE memories SET superseded = true, superseded_at = now()
+        WHERE id = $1 AND character_id = $2 AND user_id = $3 AND NOT superseded`,
+      [id, characterId, userId],
+    );
+    return rowCount ?? 0;
+  };
+
   return {
     async recall(characterId, userId, query): Promise<RecalledMemories> {
       const qvec = (await embedder.embed([query]))[0];
-      const [constraint, insight, preference, fact, episodic] = await Promise.all([
+      const [constraint, persona, preference, fact, episodic] = await Promise.all([
         listActive(characterId, userId, 'constraint'),
-        listActive(characterId, userId, 'insight'), // insight 强制在场：全量召回（不走向量，像 constraint）
+        listActive(characterId, userId, 'persona'), // persona 强制在场：全量召回（不走向量，像 constraint）
         hybridRecall(characterId, userId, 'preference', query, qvec),
         hybridRecall(characterId, userId, 'fact', query, qvec),
         hybridRecall(characterId, userId, 'episodic', query, qvec),
       ]);
-      return { constraint, fact, preference, episodic, insight };
+      return { constraint, fact, preference, episodic, persona };
     },
 
     async search(characterId, userId, query, kind, topK = recallTopK): Promise<Memory[]> {
@@ -312,15 +371,15 @@ export function createMemoryStore(
     },
 
     async write(characterId, userId, { kind, content, entityId = null, dimension = null, aspect = null, anchor = null }): Promise<Memory> {
-      // insight 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
-      if (kind === 'insight') {
-        const dup = await findDuplicateInsight(characterId, userId, content, null);
+      // persona 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
+      if (kind === 'persona') {
+        const dup = await findDuplicatePersona(characterId, userId, content, null);
         if (dup) return dup;
       }
       const [emb] = await embedder.embed([content]);
-      // insight 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的洞察重复入库。
-      if (kind === 'insight') {
-        const dup = await findDuplicateInsight(characterId, userId, content, emb);
+      // persona 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的人设/洞察重复入库。
+      if (kind === 'persona') {
+        const dup = await findDuplicatePersona(characterId, userId, content, emb);
         if (dup) return dup;
       }
       const id = randomUUID();
@@ -357,6 +416,9 @@ export function createMemoryStore(
 
     listActive,
     listAnchored,
+    listAll,
+    update: updateMemory,
+    remove: removeMemory,
     getCoverage,
     retract,
     retractById,

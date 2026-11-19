@@ -13,6 +13,7 @@ import {
   anchorLabel,
   shanghaiParts,
 } from '../src/brain/timeAware';
+import { parseTimeAnchor, rewriteRelativeTime } from '../src/brain/timeAnchor';
 import { formatTimeBlock } from '../src/brain/context';
 
 let passed = 0;
@@ -32,7 +33,7 @@ const mem = (content: string, anchor?: TimeAnchor): Memory => ({
 });
 
 const recalled = (e: string[] = [], f: string[] = []): RecalledMemories => ({
-  constraint: [], insight: [], fact: f.map((c) => mem(c)), preference: [], episodic: e.map((c) => mem(c)),
+  constraint: [], persona: [], fact: f.map((c) => mem(c)), preference: [], episodic: e.map((c) => mem(c)),
 });
 
 console.log('normalizeTimeAnchor（时间锚点规范化）');
@@ -60,6 +61,64 @@ console.log('hasRelativeTime（相对时间守卫）');
 ok('「明天」命中', () => assert.equal(hasRelativeTime('对方明天生日'), true));
 ok('「下周三」命中', () => assert.equal(hasRelativeTime('下周三是我妈忌日'), true));
 ok('绝对措辞不命中', () => assert.equal(hasRelativeTime('对方生日是 11 月 13 日'), false));
+
+console.log('parseTimeAnchor（程序化时间检测与折算）');
+ok('农历生日 → lunar', () => {
+  assert.deepEqual(parseTimeAnchor('对方生日是农历八月十五', NOV12_0215), { kind: 'periodic', rule: { type: 'lunar', month: 8, day: 15 } });
+});
+ok('腊月别名（无农历标记也判农历）→ lunar', () => {
+  assert.deepEqual(parseTimeAnchor('对方过阴历生日，腊月初八', NOV12_0215), { kind: 'periodic', rule: { type: 'lunar', month: 12, day: 8 } });
+});
+ok('阳历生日 → yearly', () => {
+  assert.deepEqual(parseTimeAnchor('对方生日是11月13日', NOV12_0215), { kind: 'periodic', rule: { type: 'yearly', month: 11, day: 13 } });
+});
+ok('忌日 → yearly', () => {
+  assert.deepEqual(parseTimeAnchor('对方妈妈忌日是三月五号', NOV12_0215), { kind: 'periodic', rule: { type: 'yearly', month: 3, day: 5 } });
+});
+ok('每年 → yearly', () => {
+  assert.deepEqual(parseTimeAnchor('对方每年11月13日都回老家', NOV12_0215), { kind: 'periodic', rule: { type: 'yearly', month: 11, day: 13 } });
+});
+ok('每月 → monthly', () => {
+  assert.deepEqual(parseTimeAnchor('对方每月15号发工资', NOV12_0215), { kind: 'periodic', rule: { type: 'monthly', day: 15 } });
+});
+ok('每周 → weekly', () => {
+  assert.deepEqual(parseTimeAnchor('对方每周五去健身', NOV12_0215), { kind: 'periodic', rule: { type: 'weekly', weekday: 5 } });
+});
+ok('明天 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方明天有面试', NOV12_0215), { kind: 'absolute', at: '2026-11-13' });
+});
+ok('下周三 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方下周三有面试', NOV12_0215), { kind: 'absolute', at: '2026-11-18' });
+});
+ok('裸「周三」→ 最近一次未来 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方周三有面试', NOV12_0215), { kind: 'absolute', at: '2026-11-18' });
+});
+ok('上周五 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方上周五来过', NOV12_0215), { kind: 'absolute', at: '2026-11-06' });
+});
+ok('下个月15号 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方下个月15号答辩', NOV12_0215), { kind: 'absolute', at: '2026-12-15' });
+});
+ok('明年3月5日 → absolute', () => {
+  assert.deepEqual(parseTimeAnchor('对方明年3月5日毕业', NOV12_0215), { kind: 'absolute', at: '2027-03-05' });
+});
+ok('无时间 → undefined', () => {
+  assert.equal(parseTimeAnchor('对方喜欢喝咖啡', NOV12_0215), undefined);
+});
+
+console.log('rewriteRelativeTime（相对词改写为绝对日期）');
+ok('明天 → 具体日期', () => {
+  assert.equal(rewriteRelativeTime('对方明天有面试', NOV12_0215), '对方11月13日有面试');
+});
+ok('下周三 → 具体日期', () => {
+  assert.equal(rewriteRelativeTime('对方下周三有面试', NOV12_0215), '对方11月18日有面试');
+});
+ok('多个相对词都替换', () => {
+  assert.equal(rewriteRelativeTime('对方明天和后天都有事', NOV12_0215), '对方11月13日和11月14日都有事');
+});
+ok('无相对词 → 原样', () => {
+  assert.equal(rewriteRelativeTime('对方生日是11月13日', NOV12_0215), '对方生日是11月13日');
+});
 
 console.log('currentTimeContext（时间上下文纯函数，东八区）');
 ok('UTC 18:15 → 北京时间 02:15 凌晨 + 周四 + 秋季', () => {

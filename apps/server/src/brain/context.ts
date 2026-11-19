@@ -53,7 +53,7 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
     { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },
-    { label: '洞察（我对对方的理解：模式/成长/关系/课题，时刻记得）', items: recalled.insight },
+    { label: '人设（对方的身份基本信息 + 稳定特质 + 你对 TA 的理解，时刻记得）', items: recalled.persona },
     { label: '偏好（软规则/习惯，长期有效）', items: recalled.preference },
     { label: '事实（稳定状态）', items: recalled.fact },
     { label: '情节（具体事件）', items: recalled.episodic },
@@ -188,6 +188,8 @@ export function buildLayeredUserPrompt(input: {
   switchTopic?: boolean; // 对方连续几轮不感兴趣 → 注入 [TOPIC] 块，主动换话题
   lastAskedQuestion?: string; // 上一轮陪伴者问句原文（若上一轮以问句结尾）→ 注入 [ANSWERED]，禁止重复问已答问题
   userSaid?: string[]; // 会话小笔记本：对方本次已回答过的话 → 注入 [SAID]，禁止重复问/矛盾
+  recentAsked?: string[]; // 近 3 天已问过的问题（跨通话）→ 注入 [ASKED]，禁止重复问
+  recentSummary?: string; // 最近 3 天对话概要（跨通话）→ 注入 [RECENT]，让陪伴者自然接上最近话题
   farewell?: boolean; // 对方这一轮在道别 → 注入 [FAREWELL] 块，回一句道别收尾、不再追问/开新话题
   timeBlock?: string; // 时间感知块（预格式化好的 [TIME] 块），空则省略
   goalBlock?: string; // [GOAL] 成长课题块（预格式化好，空则省略）
@@ -234,6 +236,12 @@ export function buildLayeredUserPrompt(input: {
     );
   }
 
+  if (input.recentSummary) {
+    parts.push(
+      `[RECENT] 你最近 3 天和对方聊过这些（当成你心里记得的事，聊到相关处自然带一句、能接上就行，别一上来就生硬回顾或复述）：\n${input.recentSummary}`,
+    );
+  }
+
   const history = formatHistory(input.history);
   if (history) parts.push(history);
 
@@ -253,6 +261,13 @@ export function buildLayeredUserPrompt(input: {
     const list = input.userSaid.map((s, i) => `${i + 1}. ${s}`).join('\n');
     parts.push(
       `[SAID] 这是对方在本次通话里已经告诉过你的事（跨通话的长期记忆另给）。别重复问已经知道答案的问题，也别说与对方这些答复相矛盾的话：\n${list}`,
+    );
+  }
+
+  if (input.recentAsked && input.recentAsked.length > 0) {
+    const list = input.recentAsked.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    parts.push(
+      `[ASKED] 这是你最近 3 天已经问过对方的问题。除非对方主动重新提起，否则别重复问这些或近义的问题（也别换种说法再问一遍）：\n${list}`,
     );
   }
 

@@ -19,7 +19,7 @@
     "dedup:insights": "tsx apps/server/src/scripts/dedup-insights.ts",
     "prestart": "npm run gen:personas",
     "preclient": "npm run gen:personas",
-    "start": "tsx apps/server/src/server.ts",
+    "start": "tsx apps/server/src/run.ts",
     "client": "npm run dev -w @mirror/client"
   },
   "devDependencies": {

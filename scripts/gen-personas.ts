@@ -101,7 +101,7 @@ function main() {
   serverLines.push("import type { Persona } from '@mirror/contracts';");
   serverLines.push('');
   serverLines.push('export const PERSONAS: Record<string, Persona> = {');
-  for (const p of personas) {
+  for (const p of personas.filter((p) => p.available)) {
     serverLines.push(`  ${JSON.stringify(p.name)}: {`);
     serverLines.push(`    name: ${JSON.stringify(p.name)},`);
     serverLines.push(`    mbti: ${JSON.stringify(p.mbti)},`);
@@ -132,7 +132,7 @@ function main() {
   clientLines.push('};');
   clientLines.push('');
   clientLines.push('export const COMPANIONS: Companion[] = [');
-  for (const p of sorted) {
+  for (const p of sorted.filter((p) => p.available)) {
     clientLines.push('  {');
     clientLines.push(`    name: ${JSON.stringify(p.name)},`);
     clientLines.push(`    gender: ${JSON.stringify(p.gender)},`);

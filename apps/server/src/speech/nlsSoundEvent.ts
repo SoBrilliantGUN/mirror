@@ -16,6 +16,11 @@ const GATEWAY = 'wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1';
 const META = 'https://nls-meta.cn-shanghai.aliyuncs.com/';
 const NAMESPACE = 'AudioEventDetection';
 
+// 重连策略：指数退避 + 上限，避免永久性错误（如 403）无限刷屏。
+const MAX_RECONNECT_ATTEMPTS = 5;   // 连续重连上限，超出后放弃
+const RECONNECT_BASE_MS = 5000;     // 首次重连等待
+const RECONNECT_MAX_MS = 30000;     // 退避封顶
+
 // NLS 事件名 → 我们的哭/笑二分类
 const CRY_EVENTS = new Set(['Cry']);
 const LAUGH_EVENTS = new Set(['Laughter']);
@@ -69,6 +74,8 @@ export class NlsSoundEventDetector {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastPcmAt = 0;                                           // 最近一次发音频时间（心跳用）
   private cachedToken: string | null = null;                       // 缓存 token，重连复用
+  private reconnectAttempts = 0;                                   // 连续重连次数（连上就清零）
+  private authFailed = false;                                      // 鉴权失败（401/403）：永久性错误，不再重连
 
   constructor(private opts: NlsDetectorOptions, private onEvent: NlsEventCallback) {}
 
@@ -121,13 +128,21 @@ export class NlsSoundEventDetector {
             context: { sdk: { name: 'nls-node', version: '0.0.1', language: 'nodejs' } },
           }),
         );
+        this.reconnectAttempts = 0; // 连上了，重连计数清零
         console.log('[NLS] 已连上、已发 StartDetection');
         this.startHeartbeat();
         done();
       });
 
       ws.on('error', (e) => {
-        console.warn(`[NLS] 声音事件检测连接失败（降级为无事件）：${(e as Error)?.message ?? e}`);
+        const msg = (e as Error)?.message ?? String(e);
+        if (/401|403/i.test(msg)) {
+          // 鉴权失败 = token 过期/失效，重试一万次也还是 403 → 标记致命、停用重连。
+          this.authFailed = true;
+          console.warn(`[NLS] 鉴权失败（${msg}）：token 过期或失效。请刷新 NLS_ACCESS_TOKEN，或改配 NLS_ACCESS_KEY_ID/SECRET 走 CreateToken。哭/笑检测本次停用。`);
+        } else {
+          console.warn(`[NLS] 声音事件检测连接失败（降级为无事件）：${msg}`);
+        }
         done();
       });
 
@@ -135,7 +150,7 @@ export class NlsSoundEventDetector {
         console.warn('[NLS] 声音事件检测连接已断开');
         if (this.ws !== ws) return; // 旧连接的 close，忽略（已重连到新连接）
         this.clearTimers();
-        if (!this.closed) this.scheduleReconnect();
+        if (!this.closed && !this.authFailed) this.scheduleReconnect();
       });
 
       ws.on('message', (data) => {
@@ -214,15 +229,22 @@ export class NlsSoundEventDetector {
     }, 5000);
   }
 
-  // 重连：非主动关闭时，断开后 5s 重连
+  // 重连：非主动关闭时，断开后指数退避重连；连续失败到上限或鉴权失败就放弃。
   private scheduleReconnect(): void {
-    if (this.closed || this.reconnectTimer !== null) return;
-    console.log('[NLS] 5s 后重连');
+    if (this.closed || this.authFailed || this.reconnectTimer !== null) return;
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      console.warn(`[NLS] 连续重连 ${this.reconnectAttempts} 次仍未连上，放弃重连（哭/笑检测停用）`);
+      this.closed = true; // 当作关闭：停止后续重连
+      return;
+    }
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** this.reconnectAttempts, RECONNECT_MAX_MS);
+    this.reconnectAttempts++;
+    console.log(`[NLS] ${Math.round(delay / 1000)}s 后重连（第 ${this.reconnectAttempts} 次）`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.closed) return;
+      if (this.closed || this.authFailed) return;
       console.log('[NLS] 尝试重连…');
       this.start().catch((e) => console.warn('[NLS] 重连失败：', (e as Error)?.message ?? e));
-    }, 5000);
+    }, delay);
   }
 }

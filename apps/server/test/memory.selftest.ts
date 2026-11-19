@@ -26,7 +26,7 @@ function ok(name: string, fn: () => void) {
 
 const recalled = (c: string[] = [], f: string[] = [], p: string[] = [], e: string[] = [], i: string[] = []): RecalledMemories => ({
   constraint: c.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'constraint' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
-  insight: i.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'insight' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  persona: i.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'persona' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   fact: f.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'fact' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   preference: p.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'preference' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   episodic: e.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'episodic' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
@@ -67,28 +67,28 @@ ok('含 [MEMORY] 标记，约束排最前', () => {
   assert.ok(block.indexOf('约束') < block.indexOf('事实'));
   assert.ok(block.includes('不要深夜逼问她'));
 });
-ok('洞察在约束之后、事实之前', () => {
+ok('人设在约束之后、事实之前', () => {
   const block = formatMemoryBlock(recalled(['红线'], ['事实'], [], [], ['她的课题']), 1000);
-  assert.ok(block.indexOf('约束') < block.indexOf('洞察'));
-  assert.ok(block.indexOf('洞察') < block.indexOf('事实'));
+  assert.ok(block.indexOf('约束') < block.indexOf('人设'));
+  assert.ok(block.indexOf('人设') < block.indexOf('事实'));
   assert.ok(block.includes('她的课题'));
 });
 
 console.log('parseReflection（反思输出解析）');
-ok('标准 JSON → facts + insights', () => {
-  const r = parseReflection('{"facts":[{"content":"她在准备转行","entityId":"user:goal"}],"insights":["一提工作就唤醒飙升"]}');
+ok('标准 JSON → facts + persona', () => {
+  const r = parseReflection('{"facts":[{"content":"她在准备转行","entityId":"user:goal"}],"persona":["一提工作就唤醒飙升"]}');
   assert.equal(r.facts.length, 1);
   assert.equal(r.facts[0].content, '她在准备转行');
-  assert.equal(r.insights[0], '一提工作就唤醒飙升');
+  assert.equal(r.persona[0], '一提工作就唤醒飙升');
 });
 ok('包 markdown 代码块也能解析', () => {
-  const r = parseReflection('```json\n{"facts":[],"insights":["x"]}\n```');
-  assert.equal(r.insights[0], 'x');
+  const r = parseReflection('```json\n{"facts":[],"persona":["x"]}\n```');
+  assert.equal(r.persona[0], 'x');
 });
 ok('纯垃圾 → 空', () => {
   const r = parseReflection('你好');
   assert.equal(r.facts.length, 0);
-  assert.equal(r.insights.length, 0);
+  assert.equal(r.persona.length, 0);
 });
 
 console.log('parseExtraction（后台抽取解析）');

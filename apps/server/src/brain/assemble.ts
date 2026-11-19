@@ -80,6 +80,8 @@ export type AssembleInput = {
   farewell?: boolean; // 对方这一轮在道别 → 注入 [FAREWELL] 块
   lastAskedQuestion?: string; // 上一轮问句原文（若上一轮以问句结尾）→ 注入 [ANSWERED] 防重复问
   userSaid?: string[]; // 会话小笔记本：对方本次已回答过的话 → 注入 [SAID] 防重复问/矛盾
+  recentAsked?: string[]; // 近 3 天已问过的问题（跨通话）→ 注入 [ASKED] 防重复问
+  recentSummary?: string; // 最近 3 天对话概要（跨通话）→ 注入 [RECENT] 块（空则省略）
   curiosityHint?: string; // 预格式化好的 [CURIOSITY] 块（server 侧缓存/复用；不传则这里现算）
   searchEnabled?: boolean; // 配了联网搜索 key → 注入 search_web 工具使用规则
 };
@@ -108,9 +110,9 @@ export type RecalledContext = {
   time: { timeContext: TimeContext; upcoming: UpcomingDate[]; careHint: string };
 };
 
-const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], preference: [], episodic: [], insight: [] };
+const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], preference: [], episodic: [], persona: [] };
 
-const RECALL_KEYS = ['constraint', 'insight', 'fact', 'preference', 'episodic'] as const;
+const RECALL_KEYS = ['constraint', 'persona', 'fact', 'preference', 'episodic'] as const;
 
 // 会话内合并人物详情：已加载的保持，新命中的追加（按 name 去重，先到先得）。
 function mergeDetails(loaded: PersonaDetail[], fresh: PersonaDetail[]): PersonaDetail[] {
@@ -127,7 +129,7 @@ export function mergeRecalled(base: RecalledMemories, extra: Memory[]): Recalled
   for (const k of RECALL_KEYS) for (const m of base[k]) seen.add(m.id);
   const out: RecalledMemories = {
     constraint: [...base.constraint],
-    insight: [...base.insight],
+    persona: [...base.persona],
     fact: [...base.fact],
     preference: [...base.preference],
     episodic: [...base.episodic],
@@ -232,6 +234,8 @@ export function buildTurnMessages(ctx: RecalledContext, deps: AssembleDeps, inpu
     farewell: input.farewell,
     lastAskedQuestion: input.lastAskedQuestion,
     userSaid: input.userSaid,
+    recentAsked: input.recentAsked,
+    recentSummary: input.recentSummary,
     curiosityHint: input.frame === 'coach' ? undefined : (input.curiosityHint ?? buildCuriosityHint(ctx.coverage)),
     timeBlock: formatTimeBlock(ctx.time.timeContext, ctx.time.upcoming, ctx.time.careHint),
     goalBlock: formatGoalBlock(ctx.goals),

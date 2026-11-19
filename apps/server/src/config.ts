@@ -27,6 +27,7 @@ export type Config = {
   cosyvoiceVoice: string;
   paraformerModel: string;    // 实时 ASR 模型
   // L2 非言语发声检测（哭/笑）：阿里云智能语音交互 NLS 声音事件检测（云端，零本地模型）
+  nlsEnabled: boolean;  // 总开关：false 时整体关闭哭/笑检测（如 token 过期时临时关掉）
   nlsAppKey: string;    // NLS 项目 AppKey（StartDetection 命令 header 里要）
   nlsToken: string;     // 已拿好的 token（优先；设了就不走 CreateToken）
   nlsAkId: string;      // 阿里云 AccessKeyId（没 token 时走 CreateToken 签名）
@@ -70,6 +71,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     nlsToken: env.NLS_ACCESS_TOKEN ?? '',
     nlsAkId: env.NLS_ACCESS_KEY_ID ?? '',
     nlsAkSecret: env.NLS_ACCESS_KEY_SECRET ?? '',
+    nlsEnabled: env.NLS_ENABLED !== 'false',
     bochaApiKey: env.BOCHA_API_KEY ?? '',
     bochaBaseUrl: env.BOCHA_BASE_URL ?? 'https://api.bochaai.com/v1',
     langfusePublicKey: env.LANGFUSE_PUBLIC_KEY ?? '',

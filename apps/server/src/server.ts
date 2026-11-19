@@ -3,20 +3,21 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { DependenceSignals, MoodState, Persona, VocalizationEvent } from '@mirror/contracts';
+import type { DependenceSignals, MoodState, Persona, VocalizationEvent, MemoryKind } from '@mirror/contracts';
 import { loadConfig, loadDotEnv } from './config';
 import { createRtcPeer } from './rtc/webrtc';
 import { ParaformerRealtimeASR } from './speech/paraformerRealtime';
 import { streamTTS, isNetworkError, isRateLimitError, type RealtimeTTSInput } from './speech/cosyvoiceRealtime';
 import { AcousticFeatureExtractor } from './speech/acousticFeatures';
 import { NlsSoundEventDetector } from './speech/nlsSoundEvent';
+import { normalizePersonaName } from './speech/nameNormalizer';
 import { VocalEventAggregator, type DominantVocal } from './speech/vocalEvents';
 import { buildInstruction, EMOTION_PROSODY, tailHint } from './speech/emotionInstruction';
 import { BackchannelEngine, BACKCHANNEL_PHRASES, concatPcm, hasVoicePcm } from './speech/backchannel';
 import { DeepSeek, type ChatMessage, type ToolCall } from './llm/deepseek';
 import { createEmbedder } from './llm/embedding';
 import { PERSONAS, resolvePersona, resolvePersonaDetails, resolveVoice } from './persona';
-import { GREETINGS } from './persona/greetings';
+import { GREETINGS, GREETINGS_EN } from './persona/greetings';
 import { createPersonaMatcher, type PersonaDetail } from './persona/loadPersona';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
@@ -26,20 +27,23 @@ import { planTurn } from './brain/turn';
 import { evaluateDisinterest, evaluatePerfunctory } from './brain/interest';
 import { SEARCH_TOOL, pickFiller } from './brain/search';
 import { bochaSearch } from './search/bocha';
-import { streamMessages, streamMessagesWithTools, generateProactiveText } from './brain/generate';
+import { streamMessages, streamMessagesWithTools, generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages } from './brain/assemble';
 import { consolidateTurn, prefetchNextTurn, createPrefetchCache } from './brain/consolidate';
 import { consolidateGoal } from './brain/goalConsolidate';
 import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './brain/selfAdd';
 import { classifyMemory } from './brain/memoryClassifier';
-import { reflectOnMemory } from './brain/reflect';
+import { dreamOnMemory } from './brain/dream';
 import { classifySegmentEmotion } from './brain/segmentEmotion';
 import { createSummarizer, compressHistory } from './brain/compress';
+import { summarizeCall, compressSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
 import { buildCuriosityHint } from './brain/ontology';
 import { buildGoalFollowUpHint, type HistoryEntry } from './brain/context';
 import { createContactsStore } from './store/contacts';
 import { createMemoryStore } from './store/memory';
+import { createAskedQuestionsStore } from './store/askedQuestions';
+import { createConversationSummariesStore } from './store/conversationSummaries';
 import { createSelfAddedStore } from './store/selfAdded';
 import { createGoalsStore } from './store/goals';
 import { createPool, ensureSchema } from './store/db';
@@ -47,10 +51,28 @@ import { EmptyContextProvider, neutralAcoustic } from './stubs';
 import { SafetyGuard } from './brain/safety';
 import { CRISIS_RESOURCES } from './brain/crisisResources';
 import { createSessionsStore } from './store/sessions';
+import { createTranscriptStore } from './store/transcript';
 import { createObs } from './obs/langfuse';
 
-async function main() {
-  loadDotEnv();
+// 语气词附和（「嗯/哦/啊/好/对/是/唔」及其重复）：抢话语境下判定为附和、不算真实打断。
+function isFillerText(text: string): boolean {
+  const t = text.replace(/[。，！？!?,\s]/g, '');
+  if (!t) return false;
+  return /^[嗯哦啊好对是唔]+$/.test(t);
+}
+
+// 英文模式：按语言在系统提示词尾部追加语言要求（沉浸式 / 纠错教学）。
+function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'immersion' | 'coach'): string {
+  if (lang !== 'en') return base;
+  const mode = englishMode === 'coach'
+    ? '用户练英语，若其语法/用词明显有误，请温和自然地顺带点出更地道的表达，但别频繁打断，优先保证对话流畅。'
+    : '自然流畅地陪用户用英文聊天即可，不要刻意纠错。';
+  return `${base}\n\n[语言要求] 本轮请全程用英文交流（自然、口语化的 English，不要用中文）。用户正在练习英语。${mode}`;
+}
+
+export async function main() {
+  // 桌面版由 Electron 主进程注入 env（不读 .env）；`npm start` 仍读 .env。
+  if (process.env.MIRROR_SKIP_DOTENV !== '1') loadDotEnv();
   const cfg = loadConfig();
   console.log(cfg.bochaApiKey ? '[search] 联网搜索已启用（BOCHA_API_KEY 已配）' : '[search] 联网搜索关闭（未配 BOCHA_API_KEY，模型不会调用 search_web）');
 
@@ -65,6 +87,7 @@ async function main() {
   const contacts = createContactsStore(pool);
   await contacts.seedDefaults(); // 新库首次启动预置默认伙伴（苏明悦），见 store/contacts.ts
   const sessions = createSessionsStore(pool); // 通话会话记录（L4 过度依赖的行为信号来源）
+  const transcript = createTranscriptStore(pool); // 逐轮聊天记录（导出/优化用）
 
   // 可观测：包装 LLM/embedding，运行时通话埋点（无 LANGFUSE key 时整体 no-op）。
   const obs = createObs({ publicKey: cfg.langfusePublicKey, secretKey: cfg.langfuseSecretKey, baseUrl: cfg.langfuseBaseUrl });
@@ -74,6 +97,8 @@ async function main() {
   // 长期记忆：embedding（百炼）+ pgvector 混合召回。未配 embedding key 时 recall 降级为空记忆。
   const embedder = obs.wrapEmbedder(createEmbedder({ apiKey: cfg.embeddingApiKey, baseUrl: cfg.embeddingBaseUrl, model: cfg.embeddingModel }), 'embed', cfg.embeddingModel);
   const memory = createMemoryStore(pool, embedder, { recallTopK: cfg.memoryRecallTopK });
+  const askedQuestions = createAskedQuestionsStore(pool); // 近 3 天已问过的问题（防重复提问）
+  const conversationSummaries = createConversationSummariesStore(pool); // 最近 3 天对话概要（跨通话「最近聊过什么」）
   const selfAdded = createSelfAddedStore(pool); // 人设增补：陪伴者底座之外的软细节
   const goals = createGoalsStore(pool); // 成长课题：Life Coach 的跨会话轨迹（重骨架）
   const holidayMap = await loadHolidayMap(shanghaiParts(new Date()).year); // 节假日/工作日判定（缓存优先，miss 联网查）
@@ -91,6 +116,8 @@ async function main() {
   let coachCheckinDone = false; // 教练态沉默：是否已轻轻确认过（确认后若还沉默 → 下一阶段温柔收尾）
   let mood: MoodState | null = null; // 会话级（L5）：每通重置
   let persona: Persona = resolvePersona('程书衡')!; // 默认接程书衡（首位、恒上线）；/rtc/offer 时按 name 覆盖
+  let lang: 'zh' | 'en' = 'zh'; // 通话语言（/rtc/offer 传入，英文模式喂给 ASR/招呼语/提示词）
+  let englishMode: 'immersion' | 'coach' = 'immersion'; // 英文模式二级开关：沉浸式 / 纠错教学
   let personaMatcher: ((text: string) => Promise<PersonaDetail[]>) | null = null; // 人物详情语义匹配器（character/ 存在时启用）
   let safetyGuard = new SafetyGuard({ llm: safetyLlm, model: cfg.safetyModel }); // 会话级（L4）：每通重置 episode
   let currentSessionId: string | null = null; // 当前通话的会话记录 id（挂断/重连时补 ended_at）
@@ -110,13 +137,14 @@ async function main() {
   let reanswerTimer: ReturnType<typeof setTimeout> | null = null;
   let reanswerCount = 0; // 同一条债已重答次数（防持续咳嗽无限重答）
   let history: HistoryEntry[] = []; // 会话历史（L5，唯一压缩对象；每轮 append，压缩在 assembleTurn 内做）
+  let recentSummaryText = ''; // 最近 3 天对话概要（通话前加载一次，注入 [RECENT]）
   let turnCount = 0; // 累计轮次（L1 状态快照用）
   let loadedDetails: PersonaDetail[] = []; // 人物详情渐进式加载缓存（会话内命中即驻留，不卸载）
   const prefetchCache = createPrefetchCache(); // look-ahead 预取缓存（后台预热，命中并入下一轮 eager 召回）
 
   // 主动发话（全部程序计时，不靠 LLM 自觉）：一联通就打招呼；提问后 5s 没答就自问自答；
-  // 连续 2 次没答就失落收尾；非问句结尾则沉默 10s 轻问一次（每段静默只一次）。
-  const NUDGE_MS = 10000;
+  // 连续 2 次没答就失落收尾；非问句结尾则沉默 2s 轻问一次（每段静默只一次）。
+  const NUDGE_MS = 2000;
   const FOLLOWUP_MS = 5000;
   const NO_REPLY_LIMIT = 3; // 1 次没答→自问自答，2 次→问"还在吗"，3 次→情绪化收尾
   const COACH_SILENT_MS = 30000; // 教练态沉默：等这么久才轻轻确认一次（比朋友态 nudge 长 3 倍）
@@ -124,12 +152,14 @@ async function main() {
   const MIN_SEARCH_MS = 1500; // 搜索即使秒回也留的自然延迟（像人查东西）
   const REANSWER_MS = 2500; // 误打断（咳嗽/底噪）后，等这么久没新话就重答，保证"说了话必回"（放宽到 2.5s，别盖着慢语速用户说话）
   const REANSWER_LIMIT = 2; // 同一条用户话最多重答几次（防持续咳嗽导致的无限重答）
+  const INTERRUPT_GRACE_MS = 700; // VAD 抢话后给 ASR 的判定期：判出只是语气词附和就不打断，判不出再真打断
   const TOPIC_DRIFT_LIMIT = 3; // 连续 3 轮都以问句结尾 = 追问太密 → 下一轮主动换话题（治"逮着一个点连问"）
 
   // 道别检测改由模型判定（brain/turn.ts 的 classifyFarewell 在决策阶段并行跑），不再用关键词正则。
   // plan.farewell 为 true 时：回一句道别收尾 → 别再主动发话（nudge/followup），等 10s 挂断；
   // 用户继续搭话则 markUserVoice 取消挂断。误判代价低（用户一开口就取消）。
-  // 是否在向用户提问。用「句子里出现过问号」判断，而不是 endsWith('？')：
+  // 是否在向用户提问。优先用生成阶段顺带输出的 awaitsResponse 标签（语义判断，见 generate.ts extractAwaits），
+  // 模型漏打标签时回退正则。用「句子里出现过问号」判断，而不是 endsWith('？')：
   // 主动发话常在问句后加软垫（"说来听听。" / "我听着。"），endsWith 会把这种真问句漏判成陈述，
   // 导致 idleFired 又拦住 nudge → 问完就整段死寂（正是"大段空白"的根因）。
   const isAsking = (text: string) => /[？?]/.test(text);
@@ -153,6 +183,9 @@ async function main() {
   let userGender: '男' | '女' | null = null; // 从语音判出的对方性别（会话级，判出即锁；null=还没判出）
   let lastWasFarewell = false;      // 上一轮是否说了"不打扰"（说完后挂断用）
   let hangupTimer: ReturnType<typeof setTimeout> | null = null; // 挂断定时器
+  let pendingInterrupt = false; // VAD 抢话待判：等 ASR 确认是「语气词附和」还是「真实抢话」
+  let interruptGraceTimer: ReturnType<typeof setTimeout> | null = null; // 抢话判定期定时器
+  let lastBargeInAt = 0; // 最近一次真打断的墙钟时间（判定期过后迟到的语气词 final 也算附和）
 
   // 副语言 backchannel（附和）：用户长段倾诉时轻声应一句，给「被听见感」不打断。onEmit 经闭包引用当前 rtc。
   const backchannel = new BackchannelEngine(
@@ -183,7 +216,9 @@ async function main() {
   // 招呼语缓存：每人几句（按人设写）、随机放，预生成、按音色缓存，接通即放（不等 LLM/TTS）。
   // 磁盘缓存：合成结果落盘（.greetings-cache/），重启后直接读文件、不再烧 TTS；改了招呼语就删掉该目录。
   const greetingClips = new Map<string, Uint8Array[]>(); // voice → 招呼语音频片段
-  const GREETING_CACHE_DIR = join(process.cwd(), 'apps', 'server', '.greetings-cache');
+  const greetingPhrases = new Map<string, string[]>(); // voice → 招呼语文本（与 clips 下标对齐，供文字记录/落库）
+  // 桌面版由 Electron 主进程注入到 userData 下；`npm start` 仍用仓库相对路径。
+  const GREETING_CACHE_DIR = process.env.GREETING_CACHE_DIR ?? join(process.cwd(), 'apps', 'server', '.greetings-cache');
   const greetingInFlight = new Map<string, Promise<void>>(); // voice → 合成中，防并发重复烧 TTS
 
   // 序列化：uint32 片段数 + 每个片段的 uint32 字节长 + 原始 PCM 拼接。
@@ -234,20 +269,22 @@ async function main() {
     }
   }
 
-  async function preloadGreetingClips(voice: string, name: string, voiceTint: string, rate: number): Promise<void> {
-    if (greetingClips.has(voice)) return;
-    const inflight = greetingInFlight.get(voice);
+  async function preloadGreetingClips(voice: string, name: string, voiceTint: string, rate: number, lang: 'zh' | 'en' = 'zh'): Promise<void> {
+    const key = `${voice}:${lang}`;
+    if (greetingClips.has(key)) return;
+    const inflight = greetingInFlight.get(key);
     if (inflight) return inflight; // 已在合成/加载中，复用同一个，别并发重复烧 TTS
 
     const task = (async () => {
       // 未写招呼语的人物回落通用（先定 phrases，才能算出带哈希的缓存文件名）。
-      const phrases = GREETINGS[name] ?? ['喂，你好呀', '嗨，是我', '你好呀'];
+      const phrases = (lang === 'en' ? GREETINGS_EN[name] : GREETINGS[name]) ?? ['喂，你好呀', '嗨，是我', '你好呀'];
+      greetingPhrases.set(key, phrases); // 与 clips 下标对齐，供文字记录/落库
       const cacheFile = greetingCacheKey(voice, phrases);
       // 先读磁盘缓存：重启后不再烧 TTS。
       const fromDisk = loadGreetingClipsFromDisk(cacheFile);
       if (fromDisk) {
-        greetingClips.set(voice, fromDisk);
-        console.log(`[greeting] ${name} 招呼语已从磁盘缓存加载（${fromDisk.length} 句）`);
+        greetingClips.set(key, fromDisk);
+        console.log(`[greeting] ${name}${lang === 'en' ? '(EN)' : ''} 招呼语已从磁盘缓存加载（${fromDisk.length} 句）`);
         return;
       }
       // 磁盘没有 → 现合成并回写磁盘。
@@ -265,31 +302,47 @@ async function main() {
         })) parts.push(pcm);
         clips.push(concatPcm(parts));
       }
-      greetingClips.set(voice, clips);
+      greetingClips.set(key, clips);
       saveGreetingClipsToDisk(cacheFile, clips); // 回写磁盘（失败不阻断，只告警）
-      console.log(`[greeting] ${name} 招呼语就绪（${clips.length} 句）`);
+      console.log(`[greeting] ${name}${lang === 'en' ? '(EN)' : ''} 招呼语就绪（${clips.length} 句）`);
     })();
 
-    greetingInFlight.set(voice, task);
+    greetingInFlight.set(key, task);
     try {
       await task;
     } finally {
-      greetingInFlight.delete(voice);
+      greetingInFlight.delete(key);
     }
   }
 
   // 直接放一条缓存的招呼语（秒回，不等 LLM/TTS）
-  function playCachedGreeting(voice: string) {
+  function playCachedGreeting(voice: string, lang: 'zh' | 'en' = 'zh') {
     if (!rtc || speaking) return;
-    const clips = greetingClips.get(voice);
+    const key = `${voice}:${lang}`;
+    const clips = greetingClips.get(key);
     if (!clips || clips.length === 0) return;
-    const pick = clips[Math.floor(Math.random() * clips.length)];
+    const idx = Math.floor(Math.random() * clips.length);
+    const pick = clips[idx];
+    const phrase = greetingPhrases.get(key)?.[idx] ?? '';
     console.log('[greeting] 播放缓存招呼语');
     speaking = true;
     agentAudible = true;
     lastTurnAskedQuestion = false;
     rtc.pushAgentPcm(pick); // 24kHz 缓存片段，内部重采样到 48kHz
     rtc.end(); // → onPlaybackEnd 收尾（speaking=false + 静默计时）
+    // 招呼语也进文字记录 + 落库（否则聊天记录第一句是空的）。
+    if (phrase) {
+      rtc?.sendControl({ type: 'transcript', role: 'agent', text: phrase });
+      transcript.insert(persona.name, userId, {
+        sessionId: currentSessionId,
+        role: 'agent',
+        text: phrase,
+        turnIndex: turnCount,
+        emotion: 'natural',
+        frame: coachTracker.current,
+        asked: isAsking(phrase),
+      }).catch((e) => console.warn('[transcript] 招呼语落库失败：', e));
+    }
   }
 
   // 招呼语预热：启动即把所有上线人物的招呼语 TTS 成缓存片段，
@@ -316,9 +369,20 @@ async function main() {
 
   // 电话结束（客户端挂断 / 连接断开 / 服务端挂断）：立刻停掉进行中的生成/TTS，别再往后端输出。
   function teardownCall(reason: 'hangup' | 'close') {
+    // 通话结束：把这一通的对话概括成「最近概要」异步落库（best-effort，失败只告警）。
+    // 先快照再清空 history，防止 hangup + close 双触发重复写。
+    const snap = history;
+    history = [];
+    if (snap.length > 0) {
+      summarizeCall(llm, cfg.generateModel, snap)
+        .then((s) => conversationSummaries.save(persona.name, userId, s))
+        .catch((e) => console.warn('[summary] 写最近概要失败：', e));
+    }
     currentGeneration++;   // 作废正在跑的 respond（myGen 失配 → 停止出句）
     currentAbort?.abort(); // 中止正在进行的 TTS 合成
     rtc?.close();          // 停止出帧 + 清队列 + 标记 closed
+    rtc = null;            // 清掉引用，否则 runDreamIfIdle 永远判成「正在通话」→ 做梦永远不跑
+    sed?.close();          // 关掉哭/笑检测（NLS）连接，别挂断后还在后台重连
     speaking = false;
     clearReanswer(); // 通话结束：取消任何挂起的重答
     lastUserTurn = null;
@@ -326,6 +390,7 @@ async function main() {
     if (idleTimer !== null) { clearTimeout(idleTimer); idleTimer = null; }
     if (vocalTimer !== null) { clearTimeout(vocalTimer); vocalTimer = null; }
     if (hangupTimer !== null) { clearTimeout(hangupTimer); hangupTimer = null; }
+    clearPendingInterrupt(); // 通话结束：取消挂起的抢话判定期
     if (currentSessionId) {
       const id = currentSessionId;
       currentSessionId = null;
@@ -432,12 +497,13 @@ async function main() {
     const dependenceSignals: DependenceSignals = currentSessionId
       ? await sessions.signals(persona.name, userId, currentSessionId).catch(() => ({ recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null }))
       : { recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null };
-    const [plan, ctx] = await Promise.all([
+    const [plan, ctx, recentAsked] = await Promise.all([
       obs.span('decision', () => planTurn(
         { llm, scoreModel: cfg.scoreModel, generateModel: cfg.generateModel, safetyGuard, tracker, coachTracker, mood },
         { text: userText, acoustic: acoustics, vocalizations: vocals, dominantVocal, persona, context, dependenceSignals },
       )),
       obs.span('recall', () => recallContext(assembleDeps, { text: userText, history, loadedDetails })),
+      askedQuestions.recent(persona.name, userId, 3), // 近 3 天问过的问题（防重复问，进 [ASKED]）
     ]);
     if (myGen !== currentGeneration) return; // 决策/召回期间被打断/被新一轮取代，放弃
     mood = plan.mood;
@@ -499,39 +565,48 @@ async function main() {
       affect: plan.affect,
       userGender,
       switchTopic,
-      personaSystemPrompt: persona.systemPrompt,
+      personaSystemPrompt: buildLanguagePrompt(persona.systemPrompt, lang, englishMode),
       vocalizations: vocals,
       safetyAction: plan.safetyAction,
       dependence: plan.dependence,
       farewell: plan.farewell,
       lastAskedQuestion: lastQuestionText,
       userSaid: [...userSaid],
+      recentAsked,
+      recentSummary: recentSummaryText,
       curiosityHint,
       searchEnabled,
     });
 
     // 单句 TTS：首句用本轮基调（零延迟），后续句生成后分类（B2）。
+    // 每句先剥结尾的 awaits 标签（顺带记录是否等回应），标签绝不喂 TTS / 写历史。
+    let awaitsResponse: boolean | null = null;
+    let firstTokenMs = 0;
     const speakOne = async (seg: string, i: number): Promise<string> => {
+      const { clean, awaits } = extractAwaits(seg);
+      if (awaits !== null) awaitsResponse = awaits;
+      if (!clean) return ''; // 整段只是标签（或空），跳过
       const segEmotion = i === 0
         ? plan.emotion
-        : await classifySegmentEmotion(llm, cfg.generateModel, seg, plan.emotion);
+        : await classifySegmentEmotion(llm, cfg.generateModel, clean, plan.emotion);
       const segProsody = EMOTION_PROSODY[segEmotion];
       const segRate = Math.round((persona.rate ?? 1.0) * (segProsody.rate ?? 1.0) * 100) / 100;
       if (i === 0) {
-        console.log('[latency] 首句开始合成', Date.now() - tStart, 'ms（从用户说完）');
-        obs.score('first-token-ms', Date.now() - tStart);
+        firstTokenMs = Date.now() - tStart;
+        console.log('[latency] 首句开始合成', firstTokenMs, 'ms（从用户说完）');
+        obs.score('first-token-ms', firstTokenMs);
       }
-      console.log('[TTS] 合成这句：', seg, '情绪：', segEmotion);
+      console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
       await obs.span('tts', () => synthesizeWithRetry({
         model: cfg.cosyvoiceModel,
         voice: resolveVoice(persona.name, cfg.cosyvoiceVoice),
-        instruction: buildInstruction(segEmotion, persona.voiceTint) + tailHint(seg),
-        text: seg,
+        instruction: buildInstruction(segEmotion, persona.voiceTint) + tailHint(clean),
+        text: clean,
         rate: segRate,
         pitch: segProsody.pitch,
         signal,
-      }), { text: seg, emotion: segEmotion });
-      return seg;
+      }), { text: clean, emotion: segEmotion });
+      return clean;
     };
 
     // 逐句 TTS：返回拼接的完整文本。
@@ -616,10 +691,44 @@ async function main() {
       reachedEnd = true;
       rtc?.end(); // 整轮结束，冲掉末尾残余
       const replyText = fullText.trim();
+      if (replyText) rtc?.sendControl({ type: 'transcript', role: 'agent', text: replyText }); // 回看：把陪伴者说的话推给前端文字记录
       obs.setOutput(replyText);
-      const asked = isAsking(replyText);
+      const asked = awaitsResponse !== null ? awaitsResponse : isAsking(replyText);
+      // 逐轮落库（导出/优化用）：user + agent 各一条，best-effort 不阻断。
+      transcript.insert(persona.name, userId, {
+        sessionId: currentSessionId,
+        role: 'user',
+        text: userText,
+        turnIndex: turnCount,
+        affect: plan.affect,
+        acoustic: acoustics,
+        vocals: vocals.length ? vocals : undefined,
+        latencyMs: lastReplyLatencyMs || null,
+      }).catch((e) => console.warn('[transcript] 用户话落库失败：', e));
+      if (replyText) {
+        transcript.insert(persona.name, userId, {
+          sessionId: currentSessionId,
+          role: 'agent',
+          text: replyText,
+          turnIndex: turnCount,
+          emotion: plan.emotion,
+          recalled: {
+            constraint: ctx.recalled.constraint.map((m) => ({ id: m.id, content: m.content })),
+            persona: ctx.recalled.persona.map((m) => ({ id: m.id, content: m.content })),
+            fact: ctx.recalled.fact.map((m) => ({ id: m.id, content: m.content })),
+            preference: ctx.recalled.preference.map((m) => ({ id: m.id, content: m.content })),
+            episodic: ctx.recalled.episodic.map((m) => ({ id: m.id, content: m.content })),
+          },
+          latencyMs: firstTokenMs || null,
+          frame: plan.frame,
+          mode: plan.mode,
+          stance: plan.stance,
+          asked,
+        }).catch((e) => console.warn('[transcript] 陪伴者话落库失败：', e));
+      }
       lastTurnAskedQuestion = asked; // 问句结尾 → 之后走 5s 追问
       if (asked) lastQuestionText = replyText; else lastQuestionText = '';
+      if (asked && replyText) askedQuestions.record(persona.name, userId, replyText).catch(() => {}); // 记一条问过的（防重复问）
       if (asked) consecutiveQuestions++; else consecutiveQuestions = 0; // 追问太密计数
       // 道别收尾：这一轮对方已道别（模型判定）→ 别再 nudge/followup，等 10s 挂断（用户继续搭话会取消）
       if (plan.farewell) {
@@ -695,7 +804,7 @@ async function main() {
     });
   }
 
-  // 静默主动发话：接通 5s 没说话打招呼；之后用户每沉默 10s 轻问一句。
+  // 静默主动发话：接通 5s 没说话打招呼；之后用户每沉默 2s 轻问一句（非问句结尾）。
   // markUserVoice 在用户出声时刷新计时基准；armIdleCheck 排一次定时器，到点自检、必要时重排。
   function markUserVoice() {
     const now = Date.now();
@@ -790,7 +899,7 @@ async function main() {
       }, wait);
       return;
     }
-    // 轻问流：非问句结尾 → 10s 静默轻问，每段只一次
+    // 轻问流：非问句结尾 → 2s 静默轻问，每段只一次
     if (idleFired) return;
     const wait = Math.max(0, NUDGE_MS - (Date.now() - lastUserVoiceAt));
     idleTimer = setTimeout(() => {
@@ -798,7 +907,7 @@ async function main() {
       if (!rtc || speaking || idleFired) return;
       if (Date.now() - lastUserVoiceAt >= NUDGE_MS) {
         idleFired = true; // 本轮静默只发一次，别变成话痨
-        console.log('[proactive] 触发 nudge（10s 静默）');
+        console.log('[proactive] 触发 nudge（2s 静默）');
         speakProactive('nudge').catch(console.error);
       } else {
         armIdleCheck();
@@ -806,12 +915,20 @@ async function main() {
     }, wait);
   }
 
-  // 打断（barge-in）：对方抢话时立刻停声。两个来源都会走到这里——
-  // ① 前端 data channel 的 interrupt（快，但 VAD 阈值可能漏）② ASR 在 agentAudible 期间判到字（稳，真抢话）。
-  function handleBargeIn(source: 'rtc' | 'asr') {
-    if (!agentAudible) return; // 陪伴者没在出声，这不是抢话，忽略（正常接话走 ASR 主流程）
+  // 取消 VAD 抢话的判定期（判出语气词附和时用）。
+  function clearPendingInterrupt() {
+    pendingInterrupt = false;
+    if (interruptGraceTimer !== null) {
+      clearTimeout(interruptGraceTimer);
+      interruptGraceTimer = null;
+    }
+  }
+
+  // 真打断：清声 + 复位 + 重答兜底。
+  function doBargeIn(source: 'rtc' | 'asr') {
     console.log(`[RTC] 打断（interrupt，via ${source}）`);
     void obs.trace('interrupt', { metadata: { characterId: persona.name, source } }, async () => {});
+    lastBargeInAt = Date.now();
     currentGeneration++;      // 作废当前 respond
     currentAbort?.abort();    // 中止正在进行的 TTS 合成
     rtc?.clear();             // 清空播放队列，立刻停声
@@ -822,6 +939,29 @@ async function main() {
     markUserVoice();          // 你抢话了：重置追问/静默计数（别紧接着就自问自答/收尾）
     armReanswer();            // 掐掉的是正在播的回复：若只是误触发没新话，稍后重答，保证"说了话必回"
     armIdleCheck();
+  }
+
+  // 打断（barge-in）：对方抢话时停声。两个来源——
+  // ① 前端 data channel 的 interrupt（快、只表示「有人说话」、不知内容）
+  // ② ASR 在 agentAudible 期间判到字（稳，真抢话）。
+  // VAD 抢话先不立刻停声，进入短判定期：若 ASR 判出只是「嗯/哦」这类语气词附和，就取消、让对方继续说；
+  // 判出真字、或判定期到期没等到 ASR，才真打断。
+  function handleBargeIn(source: 'rtc' | 'asr') {
+    if (!agentAudible) return; // 陪伴者没在出声，这不是抢话，忽略（正常接话走 ASR 主流程）
+    if (source === 'rtc') {
+      if (pendingInterrupt) return; // 已在判定期，等 ASR 出结论
+      pendingInterrupt = true;
+      if (interruptGraceTimer !== null) clearTimeout(interruptGraceTimer);
+      interruptGraceTimer = setTimeout(() => {
+        interruptGraceTimer = null;
+        pendingInterrupt = false;
+        doBargeIn('rtc'); // 判定期到期没等到 ASR 判定 → 真打断
+      }, INTERRUPT_GRACE_MS);
+      return;
+    }
+    // ASR 判到真字：立即真打断
+    clearPendingInterrupt();
+    doBargeIn('asr');
   }
 
   // 主动发话（开场白 / 静默关怀）：没有用户输入，单独走生成 + TTS，不进打分/记忆热路径。
@@ -838,10 +978,10 @@ async function main() {
       input: { kind },
     }, async () => {
     try {
-      const system = buildProactiveSystemPrompt(kind, persona.systemPrompt, lastQuestionText, kind === 'nudge' && coachTracker.current === 'friend' ? lastCuriosityHint || undefined : undefined);
+      const system = buildProactiveSystemPrompt(kind, buildLanguagePrompt(persona.systemPrompt, lang, englishMode), lastQuestionText, kind === 'nudge' && coachTracker.current === 'friend' ? lastCuriosityHint || undefined : undefined);
       const text = await generateProactiveText(llm, cfg.generateModel, system);
       if (myGen !== currentGeneration) return;
-      const seg = text.trim();
+      const { clean: seg, awaits } = extractAwaits(text.trim());
       if (!seg) return;
       console.log('[proactive] 文本：', seg);
       obs.setOutput(seg);
@@ -855,12 +995,23 @@ async function main() {
       }), { text: seg });
       if (myGen === currentGeneration) {
         history.push({ kind: 'turn', role: 'agent', text: seg }); // 主动话也进历史，保持上下文连贯
+        rtc?.sendControl({ type: 'transcript', role: 'agent', text: seg }); // 主动发话也进文字记录
         reachedEnd = true;
         rtc?.end();
-        const asked = isAsking(seg);
+        const asked = awaits !== null ? awaits : isAsking(seg);
         lastTurnAskedQuestion = asked; // 问句结尾 → 之后走 5s 追问
         if (asked) lastQuestionText = seg; else lastQuestionText = '';
         if (kind === 'farewell' || kind === 'coachClose') lastWasFarewell = true; // 说完收尾后 10s 挂断（教练态温柔留门收尾也走同一挂断）
+        // 主动话也落库（导出用）：best-effort，不阻断。
+        transcript.insert(persona.name, userId, {
+          sessionId: currentSessionId,
+          role: 'agent',
+          text: seg,
+          turnIndex: turnCount,
+          emotion: 'natural',
+          frame: coachTracker.current,
+          asked,
+        }).catch((e) => console.warn('[transcript] 主动话落库失败：', e));
       }
     } catch (e) {
       console.warn('[proactive] 主动发话失败：', e);
@@ -921,7 +1072,7 @@ async function main() {
   const server = createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
@@ -966,9 +1117,72 @@ async function main() {
       return;
     }
 
+    // 笔记本 / 记忆库：跨型列出某伙伴的未归档记忆（?character=姓名&since=ISO&kind=类型）。
+    if (req.method === 'GET' && req.url?.startsWith('/memories')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const character = u.searchParams.get('character') ?? persona.name;
+        const since = u.searchParams.get('since') ?? undefined;
+        const kindParam = u.searchParams.get('kind');
+        const kind = kindParam ? (kindParam as MemoryKind) : undefined;
+        sendJson(res, 200, { memories: await memory.listAll(character, userId, { kind, since }) });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+    // 笔记本编辑：PATCH /memories/:id?character=姓名，body { content?, kind? }。
+    if (req.method === 'PATCH' && req.url?.startsWith('/memories/')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const id = u.pathname.slice('/memories/'.length);
+        const character = u.searchParams.get('character') ?? persona.name;
+        const body = await readJson<{ content?: string; kind?: MemoryKind }>(req);
+        const m = await memory.update(character, userId, id, body);
+        if (!m) {
+          sendJson(res, 404, { error: '记忆不存在' });
+          return;
+        }
+        sendJson(res, 200, { memory: m });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+    // 笔记本删除：DELETE /memories/:id?character=姓名（软删除 superseded）。
+    if (req.method === 'DELETE' && req.url?.startsWith('/memories/')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const id = u.pathname.slice('/memories/'.length);
+        const character = u.searchParams.get('character') ?? persona.name;
+        sendJson(res, 200, { removed: await memory.remove(character, userId, id) });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+
+    // 聊天记录导出：结构化 JSON（对话正文 + 元数据），供后续分析/优化。
+    if (req.method === 'GET' && req.url?.startsWith('/export/chat')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const character = u.searchParams.get('character') ?? persona.name;
+        const since = u.searchParams.get('since') ?? undefined;
+        const limitParam = u.searchParams.get('limit');
+        const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 2000) : undefined;
+        const turns = await transcript.list(character, userId, { since, limit });
+        sendJson(res, 200, { character, exportedAt: new Date().toISOString(), count: turns.length, turns });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+
     if (req.method === 'POST' && req.url === '/rtc/offer') {
       try {
-        const body = await readJson<{ sdp: string; name?: string }>(req);
+        const body = await readJson<{ sdp: string; name?: string; lang?: 'zh' | 'en'; englishMode?: 'immersion' | 'coach' }>(req);
+        lang = body.lang === 'en' ? 'en' : 'zh';
+        englishMode = body.englishMode === 'coach' ? 'coach' : 'immersion';
         const resolved = resolvePersona(body.name ?? '程书衡');
         if (!resolved) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1009,11 +1223,20 @@ async function main() {
         prefetchCache.clear(); // 预取缓存随通话重置，避免上一通的陈旧预热污染新会话
         lastUserVoiceAt = Date.now(); // 静默主动发话的计时基准从接通这一刻起
         idleFired = false;
+        clearPendingInterrupt(); // 新通话：清掉上一通残留的抢话判定期
         lastTurnAskedQuestion = false;
         lastQuestionText = ''; // 上一通遗留的问句要清掉，别在新通话里注入陈旧的 [ANSWERED]
         userSaid.length = 0;
         prevTurnMemoryIds = [];
         lastCuriosityHint = '';
+        // 最近 3 天对话概要：新通话加载一次（超预算在后台压成短回顾，别卡建连）。
+        recentSummaryText = '';
+        conversationSummaries.recent(persona.name, userId, 3)
+          .then(async (summaries) => {
+            if (summaries.length === 0) return;
+            recentSummaryText = await compressSummaries(llm, cfg.generateModel, summaries).catch(() => summaries.join('\n'));
+          })
+          .catch(() => {});
         noReplyStreak = 0;
         disinterestStreak = 0;
         perfunctoryStreak = 0;
@@ -1023,16 +1246,12 @@ async function main() {
         speaking = false;
         userGender = null; // 每通重新判性别
 
-        // 后端反思（记忆巩固）：异步把上一会话积累的情节记忆酿成事实+洞察（不阻塞建连），
-        // 产物流入后续 recall → L2 注入，让教练「越聊越懂她」。洞察强制在场、有硬上限。
-        void obs.trace('reflect', { metadata: { characterId: persona.name } }, () =>
-          reflectOnMemory({ llm, model: cfg.generateModel, store: memory, userId, characterId: persona.name }),
-        ).catch((e) => console.warn('[reflect] 反思失败：', e));
+        // 记忆巩固（做梦）已改为「空闲时自动」跑，见文件尾部 runDreamIfIdle——不再在接通时同步反思。
 
         // 哭/笑检测（NLS 云端）：收 PCM、出事件。连不上/未配凭证时 onEvent 不被调用，主链路照常。
         const hasToken = Boolean(cfg.nlsToken);
         const hasAk = Boolean(cfg.nlsAkId && cfg.nlsAkSecret);
-        if (cfg.nlsAppKey && (hasToken || hasAk)) {
+        if (cfg.nlsEnabled && cfg.nlsAppKey && (hasToken || hasAk)) {
           sed = new NlsSoundEventDetector(
             {
               appKey: cfg.nlsAppKey,
@@ -1046,6 +1265,9 @@ async function main() {
               scheduleVocalRespond(); // 纯哭/纯笑无字 → 去抖触发回应
             },
           );
+        } else if (!cfg.nlsEnabled) {
+          sed = null;
+          console.warn('[NLS] 已通过 NLS_ENABLED=false 关闭哭/笑检测');
         } else {
           sed = null;
           console.warn('[NLS] 未配 NLS 凭证（NLS_APPKEY + NLS_TOKEN 或 NLS_ACCESS_KEY_ID/SECRET），哭/笑检测关闭');
@@ -1097,17 +1319,34 @@ async function main() {
           wsUrl: cfg.dashscopeWsUrl,
           apiKey: cfg.dashscopeApiKey,
           model: cfg.paraformerModel,
+          languageHints: lang === 'en' ? ['en'] : ['zh'],
           onResult: (text, isFinal) => {
             console.log('[ASR] 结果：', JSON.stringify({ text, isFinal }));
+            const t = text.trim();
+            // 语气词附和（「嗯/哦/啊/好/对/是/唔」）：抢话语境下别打断、别当成一轮新话——让对方继续说。
+            if (t && isFillerText(t) && (agentAudible || pendingInterrupt || Date.now() - lastBargeInAt < 1500)) {
+              if (isFinal) {
+                clearPendingInterrupt(); // 确认只是附和，取消 VAD 的待定打断（AI 继续讲）
+                pendingVocals.reset();   // 这一小段不算哭/笑事件
+              } else if (pendingInterrupt) {
+                // interim 是附和：延长判定期，等 final 确认（也可能是「嗯，那个…」真实话）。
+                if (interruptGraceTimer !== null) clearTimeout(interruptGraceTimer);
+                interruptGraceTimer = setTimeout(() => {
+                  interruptGraceTimer = null;
+                  pendingInterrupt = false;
+                  doBargeIn('rtc');
+                }, INTERRUPT_GRACE_MS);
+              }
+              return;
+            }
             if (agentAudible) {
               // 陪伴者在出音频时 ASR 判到字：回声已被前端 AEC 消，判到字基本是真抢话（比 VAD 稳）。
               // 触发打断后让这段文字继续往下走，不再当回声丢弃。
-              const t = text.trim();
               if (t.length >= 2 || (isFinal && t)) handleBargeIn('asr');
               else return; // 单字/空：要么刚开始说，要么回声残影，再等等
             }
             if (isFinal && Date.now() - recentVoiceAt > 3000) return; // 幻听门控：isFinal 却无近期真声能 → 纯底噪幻听，丢弃（窗口放宽到 3s，VAD 断句+软尾音会拖 1~2s）
-            if (text.trim()) {
+            if (t) {
               recentVoiceAt = Date.now(); // ASR 判到字 = 真在说话，刷新门控基准（hasVoicePcm 按 20ms 块判 RMS，软尾音/断续会漏，用「判到字」兜底）
               if (speaking) {
                 // AI 还在「生成中」（尚未出声）用户就开口了：作废在途发话，别等它出声抢话
@@ -1118,18 +1357,20 @@ async function main() {
               markUserVoice(); // ASR 判到字才算真的在说话（比 RMS 阈值可靠，不被底噪误判）
             }
             if (isFinal) {
-              if (text.trim()) {
+              if (t) {
+                const cleanText = normalizePersonaName(t, persona.name); // 名字同音字改回正确写法（如「明月」→「明悦」）
                 const vocals = pendingVocals.list; // 把这期间的哭/笑事件附着到这轮文字
                 const dominantVocal = pendingVocals.dominant();
                 pendingVocals.reset();
                 clearVocalTimer(); // 有字了，取消纯发声触发
                 backchannel.onTurnEnd(); // 一轮结束，复位附和计数
-                lastUserTurn = { text: text.trim(), vocals, dominantVocal }; // 新债：这条必须回
+                lastUserTurn = { text: cleanText, vocals, dominantVocal }; // 新债：这条必须回
                 reanswerCount = 0; // 新债重置重答计数
                 clearReanswer(); // 有新话了，取消上一次误打断的重答
-                respond(text.trim(), vocals, dominantVocal).catch(console.error);
+                rtc?.sendControl({ type: 'transcript', role: 'user', text: cleanText }); // 回看：把"你说的话"推给前端文字记录
+                respond(cleanText, vocals, dominantVocal).catch(console.error);
               }
-            } else if (text.trim()) {
+            } else if (t) {
               clearReanswer(); // 用户在说新话：取消"误打断重答"，别抢话
               backchannel.onInterim(); // interim 有字：用户在说、还没说完，允许附和
             }
@@ -1143,10 +1384,10 @@ async function main() {
         const greetVoice = resolveVoice(persona.name, cfg.cosyvoiceVoice);
         idleFired = true; // 招呼算一次主动发话，本轮静默不再重复
         try {
-          await preloadGreetingClips(greetVoice, persona.name, persona.voiceTint, persona.rate ?? 1.0);
+          await preloadGreetingClips(greetVoice, persona.name, persona.voiceTint, persona.rate ?? 1.0, lang);
           await rtc.whenReady(); // 等连接真正建立（首包到达）再放，否则开头音频会被切
           void obs.trace('greeting', { metadata: { kind: 'cached' } }, async () => {
-            playCachedGreeting(greetVoice);
+            playCachedGreeting(greetVoice, lang);
           });
         } catch (e) {
           console.warn('[greeting] 招呼语预热失败，回退 LLM 生成：', e);
@@ -1163,9 +1404,40 @@ async function main() {
     res.end('not found');
   });
 
-  server.listen(3001, () => {
-    console.log('实时通话服务已启动：http://localhost:3001（信令 /rtc/offer）');
+  const PORT = Number(process.env.PORT ?? 3001);
+  server.listen(PORT, () => {
+    console.log(`实时通话服务已启动：http://localhost:${PORT}（信令 /rtc/offer）`);
   });
+
+  // 做梦：空闲时自动巩固记忆（合并去重 + 清理矛盾 + 抽象升级）。有通话时跳过。
+  const DREAM_INTERVAL_MS = 3 * 60 * 1000; // 每 3 分钟扫一次
+  let dreaming = false;
+  const lastDreamAt = new Map<string, string>(); // persona.name → 上次做梦完成时间（ISO），脏标记：没有新记忆就跳过
+  async function runDreamIfIdle() {
+    if (rtc || dreaming) return; // 正在通话 / 上一轮还没跑完就跳过
+    dreaming = true;
+    try {
+      for (const p of Object.values(PERSONAS)) {
+        if (!p.available) continue;
+        try {
+          // 脏标记：自上次做梦后没有新落库记忆，跳过（省掉全量重 embedding + 重跑 reflect LLM）。
+          const prev = lastDreamAt.get(p.name);
+          if (prev) {
+            const fresh = await memory.listAll(p.name, userId, { since: prev });
+            if (fresh.length === 0) continue;
+          }
+          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, characterId: p.name });
+          lastDreamAt.set(p.name, new Date().toISOString()); // 完成后才记：做梦自己写的 fact/persona 不会再触发下一轮
+          console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedPersona}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
+        } catch (e) {
+          console.warn(`[dream] ${p.name} 做梦失败：`, e);
+        }
+      }
+    } finally {
+      dreaming = false;
+    }
+  }
+  setInterval(runDreamIfIdle, DREAM_INTERVAL_MS);
 
   // 进程退出前 flush 一次 LangFuse（后台批量，避免最后几个 trace 丢在缓冲区）。
   const shutdown = (sig: string) => {
@@ -1195,7 +1467,5 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// 直接运行时（npm start → tsx apps/server/src/run.ts）由 run.ts 调用 main；
+// Electron 主进程 import { main } 后自行调用。这里不再自动执行。

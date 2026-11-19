@@ -10,7 +10,7 @@ const KIND_LABEL: Record<MemoryKind, string> = {
   fact: '事实',
   preference: '偏好',
   episodic: '情节',
-  insight: '洞察',
+  persona: '人设',
 };
 
 export type MemoryToolRuntime = {
@@ -50,12 +50,12 @@ export function buildMemoryTools(deps: {
         name: 'write_memory',
         description:
           '把值得长期记住的内容写进记忆。当对方说出关于自己的稳定事实、反复表达的偏好、或重要事件时调用。' +
-          '不要每句话都写，只在确有价值时写。kind 先自报（fact/preference/episodic/constraint），系统会再核对一次。',
+          '不要每句话都写，只在确有价值时写。kind 先自报（fact/preference/episodic/persona/constraint），系统会再核对一次。',
         parameters: {
           type: 'object',
           properties: {
             content: { type: 'string', description: '用第三人称、一句话概括要记住的内容' },
-            kind: { type: 'string', enum: ['constraint', 'fact', 'preference', 'episodic'] },
+            kind: { type: 'string', enum: ['constraint', 'fact', 'preference', 'episodic', 'persona'] },
           },
           required: ['content', 'kind'],
         },

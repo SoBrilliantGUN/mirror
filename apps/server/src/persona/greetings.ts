@@ -20,3 +20,11 @@ export const GREETINGS: Record<string, string[]> = {
   '苏念安': ['喂，你好呀', '嗯，我在，慢慢来', '你好，我陪着你'],
   '温以柔': ['喂，你好', '嗯，我在', '你好呀'],
 };
+
+// 英文模式招呼语（练英语用）。只覆盖已上线 4 位；未覆盖的回落中文再兜底。
+export const GREETINGS_EN: Record<string, string[]> = {
+  '程书衡': ['Hey, it\'s Cheng Shuheng. I\'m here.', 'Hey, I\'m listening. Go ahead.', 'Hey there, what\'s on your mind?'],
+  '沈知遥': ['Hi, it\'s me. I\'m here.', 'Hey, what\'s up?', 'Hi, I\'m all ears.'],
+  '沈砚秋': ['Hey, I\'m here.', 'Mm, I\'m listening. Take your time.', 'Hello, go on.'],
+  '苏明悦': ['Hey there! It\'s Mingyue.', 'Hi, it\'s me!', 'Hey, Su Mingyue here. What\'s up?'],
+};

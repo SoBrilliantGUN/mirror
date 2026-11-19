@@ -14,6 +14,7 @@ import type { HolidayMap } from './holiday';
 // - upcomingDates：查带时间锚点的活跃记忆，评估「今天/临近」命中（B 重要日期）。
 // - scheduleCareHint：深夜/凌晨 + 记忆里有作息痕迹时给一句软提示（C 作息关怀）。
 // 时间锚点硬约束：记忆里的时间只能是绝对或周期，禁止相对（今天/明天/下周三）。
+// 注：程序化时间检测/折算（正则找时间 → 锚点）已拆到 timeAnchor.ts，这里只留「消费」侧。
 
 const WEEKDAY_CN = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -41,7 +42,7 @@ function shanghaiMidnight(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day) - SHANGHAI_OFFSET_MS);
 }
 
-function startOfDay(d: Date): Date {
+export function startOfDay(d: Date): Date {
   const p = shanghaiParts(d);
   return shanghaiMidnight(p.year, p.month, p.day);
 }

@@ -2,6 +2,16 @@ import type { Frame, HistoryTurn, Mode, Stance } from '@mirror/contracts';
 import type { ChatMessage, DeepSeek, Tool, ToolCall } from '../llm/deepseek';
 import { buildGenerateSystemPrompt, buildGenerateUserPrompt } from './prompts';
 
+// 结尾「是否等回应」标签：生成时顺带输出 [[AWAITS:1]]（等对方回应/提问）或 [[AWAITS:0]]（纯陈述）。
+// 模型漏打标签时 awaits 返回 null，调用方回退正则（/[？?]/）兜底。
+const AWAITS_RE = /\[\[AWAITS\s*:\s*([01])\]\]/i;
+
+export function extractAwaits(text: string): { clean: string; awaits: boolean | null } {
+  const m = AWAITS_RE.exec(text);
+  if (!m) return { clean: text, awaits: null };
+  return { clean: text.replace(AWAITS_RE, '').trim(), awaits: m[1] === '1' };
+}
+
 // call2：生成（流式）。返回按句切分的文本；情绪由后端从 affect 推导，不在此处理。
 export async function generateText(
   llm: DeepSeek,
