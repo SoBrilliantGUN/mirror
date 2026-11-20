@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { COMPANIONS, type Companion } from './companions.generated';
+import { useCall } from './useCall';
 import MemoryLibrary from './memories/MemoryLibrary';
 import SettingsPanel from './settings/SettingsPanel';
 
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
 type Mem = { id: string; kind: string; content: string; createdAt: string };
-type TranscriptRow = { role: 'user' | 'agent'; text: string };
 
 const KIND_LABEL: Record<string, string> = {
   fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
@@ -34,29 +34,20 @@ export default function Page() {
   const [keysMissing, setKeysMissing] = useState(false);
 
   const [inCall, setInCall] = useState(false);
-  const [status, setStatus] = useState('');
-  const [muted, setMuted] = useState(false);
-  const [transcript, setTranscript] = useState<TranscriptRow[]>([]);
   const [callStartAt, setCallStartAt] = useState<string | null>(null);
   const [memories, setMemories] = useState<Mem[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [safety, setSafety] = useState<{ level: number; resources: { name: string; number: string; note?: string }[] } | null>(null);
 
   const [contactsLoading, setContactsLoading] = useState(true);
   // 笔记本侧栏的行内编辑 / 删除二次确认（Electron 不支持 prompt/confirm）
   const [editingMem, setEditingMem] = useState<{ id: string; text: string } | null>(null);
   const [deletingMem, setDeletingMem] = useState<string | null>(null);
 
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const vadRunningRef = useRef(false);
-  const audioElsRef = useRef<HTMLAudioElement[]>([]);
-  const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const memTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  const call = useCall(getServer);
 
   const selectedCompanion: Companion | null = selected ? COMPANIONS.find((c) => c.name === selected) ?? null : null;
 
@@ -96,7 +87,7 @@ export default function Page() {
   // 滚动到底
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight });
-  }, [transcript]);
+  }, [call.transcript]);
 
   const showNotice = (msg: string) => {
     setNotice(msg);
@@ -145,7 +136,6 @@ export default function Page() {
   function select(name: string) {
     if (inCall) return;
     setSelected(name);
-    setTranscript([]);
     setCallStartAt(null);
     setMemories([]);
   }
@@ -153,163 +143,15 @@ export default function Page() {
   function startCall(c: Companion) {
     if (!c.available) return;
     setSelected(c.name);
-    setTranscript([]);
     setMemories([]);
     setCallStartAt(new Date().toISOString());
     setInCall(true);
-    start(c);
-  }
-
-  function start(c: Companion) {
     setNotice(null);
-    setSafety(null);
-    setMuted(false);
-    setStatus('连接中…');
-    navigator.mediaDevices
-      .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-      .then(async (stream) => {
-        streamRef.current = stream;
-        const pc = new RTCPeerConnection();
-        pcRef.current = pc;
-        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-
-        const dc = pc.createDataChannel('control');
-        dcRef.current = dc;
-        dc.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(String(ev.data));
-            if (msg.type === 'hangup') hangup();
-            if (msg.type === 'safety') setSafety({ level: msg.level, resources: msg.resources });
-            if (msg.type === 'transcript') {
-              setTranscript((prev) => [...prev, { role: msg.role, text: String(msg.text ?? '') }]);
-            }
-          } catch { /* 非 JSON 忽略 */ }
-        };
-
-        const audioCtx = new AudioContext();
-        audioCtxRef.current = audioCtx;
-        audioCtx.resume().catch(() => {});
-        pc.ontrack = (e) => {
-          const stream2 = e.streams[0] ?? new MediaStream([e.track]);
-          const el = document.createElement('audio');
-          el.srcObject = stream2;
-          el.autoplay = true;
-          document.body.appendChild(el);
-          el.play().catch(() => {});
-          audioElsRef.current.push(el);
-        };
-
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await waitForIceGathering(pc);
-        const res = await fetch(`${getServer()}/rtc/offer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sdp: pc.localDescription?.sdp ?? offer.sdp, name: c.name }),
-        });
-        if (!res.ok) {
-          let msg = '信令 HTTP ' + res.status;
-          try {
-            const body = (await res.json()) as { error?: string };
-            if (body?.error) msg = body.error;
-          } catch { /* 非 JSON 响应，保留默认提示 */ }
-          throw new Error(msg);
-        }
-        const { sdp } = await res.json();
-        await pc.setRemoteDescription({ type: 'answer', sdp });
-
-        setStatus('已接通，开始说话吧');
-        startVad(stream, audioCtx);
-        startHealthPoll();
-      })
-      .catch((e) => {
-        console.error('接通失败：', e);
-        setStatus('出错：' + (e instanceof Error ? e.message : String(e)));
-      });
-  }
-
-  function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
-    if (pc.iceGatheringState === 'complete') return Promise.resolve();
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
-      pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') finish(); });
-      setTimeout(finish, 3000);
+    call.start(c.name, (reason) => {
+      setInCall(false);
+      if (memTimerRef.current) { clearInterval(memTimerRef.current); memTimerRef.current = null; }
+      if (reason === 'disconnect') showNotice('连接已断开，对方不在线了');
     });
-  }
-
-  function startVad(stream: MediaStream, audioCtx: AudioContext) {
-    const src = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    src.connect(analyser);
-    const data = new Uint8Array(analyser.fftSize);
-    const ON_RMS = 0.06, OFF_RMS = 0.03, MIN_SPEECH_MS = 120;
-    let wasSpeaking = false, speakingSince = 0, interruptSent = false;
-    const tick = () => {
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-      const rms = Math.sqrt(sum / data.length);
-      const speaking = rms > (wasSpeaking ? OFF_RMS : ON_RMS);
-      if (speaking && !wasSpeaking) { speakingSince = performance.now(); interruptSent = false; }
-      if (speaking && !interruptSent && performance.now() - speakingSince >= MIN_SPEECH_MS) {
-        interruptSent = true;
-        if (dcRef.current?.readyState === 'open') dcRef.current.send(JSON.stringify({ type: 'interrupt' }));
-      }
-      wasSpeaking = speaking;
-      if (vadRunningRef.current) requestAnimationFrame(tick);
-    };
-    vadRunningRef.current = true;
-    tick();
-  }
-
-  function stop() {
-    vadRunningRef.current = false;
-    if (memTimerRef.current) { clearInterval(memTimerRef.current); memTimerRef.current = null; }
-    clearHealthPoll();
-    for (const el of audioElsRef.current) {
-      try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
-    }
-    audioElsRef.current = [];
-    audioCtxRef.current?.close().catch(() => {});
-    audioCtxRef.current = null;
-    pcRef.current?.close();
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-  }
-
-  function clearHealthPoll() {
-    if (healthTimerRef.current !== null) { clearInterval(healthTimerRef.current); healthTimerRef.current = null; }
-  }
-
-  function startHealthPoll() {
-    clearHealthPoll();
-    const tick = async () => {
-      try {
-        const res = await fetch(`${getServer()}/health`, { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-      } catch {
-        stop();
-        showNotice('连接已断开，对方不在线了');
-        setInCall(false);
-        setStatus('');
-      }
-    };
-    healthTimerRef.current = setInterval(tick, 3000);
-  }
-
-  function toggleMute() {
-    const next = !muted;
-    streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
-    setMuted(next);
-  }
-
-  function hangup() {
-    if (dcRef.current?.readyState === 'open') dcRef.current.send(JSON.stringify({ type: 'hangup' }));
-    stop();
-    setInCall(false);
-    setStatus('');
-    setSafety(null);
   }
 
   async function toggleAdd(c: Companion) {
@@ -422,15 +264,15 @@ export default function Page() {
                 <div className="avatar" style={{ background: selectedCompanion.color }}>{avatarText(selectedCompanion)}</div>
                 <div>
                   <div className="name">{selectedCompanion.name}</div>
-                  <div className="status">{status || selectedCompanion.temperament}</div>
+                  <div className="status">{call.status || selectedCompanion.temperament}</div>
                 </div>
                 <div className="live"><span className="pulse" />通话中</div>
               </div>
               <div className="transcript" ref={transcriptRef}>
-                {transcript.length === 0 ? (
+                {call.transcript.length === 0 ? (
                   <div className="transcript-empty">文字记录会出现在这里…</div>
                 ) : (
-                  transcript.map((t, i) => (
+                  call.transcript.map((t, i) => (
                     <div className={`row ${t.role === 'user' ? 'user' : 'ai'}`} key={i}>
                       <div className="bubble">{t.text}</div>
                       <div className="who">{t.role === 'user' ? '我' : selectedCompanion.name}</div>
@@ -440,8 +282,8 @@ export default function Page() {
                 <div className="speaking"><i /><i /><i />对方正在说…</div>
               </div>
               <div className="controls">
-                <button className={`ctl${muted ? ' muted' : ''}`} onClick={toggleMute}>{muted ? '🎙️ 开麦' : '🎙️ 关麦'}</button>
-                <button className="ctl hangup" onClick={hangup}>📞 挂断</button>
+                <button className={`ctl${call.muted ? ' muted' : ''}`} onClick={call.toggleMute}>{call.muted ? '🎙️ 开麦' : '🎙️ 关麦'}</button>
+                <button className="ctl hangup" onClick={call.hangup}>📞 挂断</button>
               </div>
             </>
           )}
@@ -533,20 +375,20 @@ export default function Page() {
 
       {notice && <div className="toast">{notice}</div>}
 
-      {safety && (
+      {call.safety && (
         <div className="safety-overlay">
           <div className="safety-card">
             <div className="safety-title">请别一个人扛</div>
             <div className="safety-sub">此刻可以联系这些真人帮助（24 小时）：</div>
             <ul className="safety-list">
-              {safety.resources.map((r) => (
+              {call.safety.resources.map((r) => (
                 <li key={r.number}>
                   <a href={`tel:${r.number}`}>{r.name} {r.number}</a>
                   {r.note ? <span className="safety-note">（{r.note}）</span> : null}
                 </li>
               ))}
             </ul>
-            <button className="safety-close" onClick={() => setSafety(null)}>我知道了</button>
+            <button className="safety-close" onClick={call.dismissSafety}>我知道了</button>
           </div>
         </div>
       )}
