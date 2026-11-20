@@ -1,3 +1,5 @@
+import { pinyin } from 'pinyin-pro';
+
 // 名字同音字纠正：ASR 常把陪伴者的名字/昵称听成同音字（如「明悦」→「明月」），
 // 导致模型看到错误写法后反而去纠正对方。这里在文本进模型前，按「当前人物」把其名字的
 // 已知同音字写法确定性改回正确写法。只碰名字这一小类，不碰正文里其它同音词。
@@ -32,6 +34,39 @@ export function normalizePersonaName(text: string, personaName: string): string 
   let out = text;
   for (const [wrong, right] of Object.entries(variants)) {
     out = out.split(wrong).join(right);
+  }
+  return out;
+}
+
+// 用户名同音字纠正（拼音指纹）：把用户名的拼音当"指纹"，扫描文本里拼音一致（忽略声调）的
+// 连续子串，替换成正确名字。解决语音识别把用户名听成同音字（张渔歌 → 章鱼哥）的问题。
+// 只匹配「全名」，不匹配去掉姓氏的"名"，降低把真实词（如"章鱼"）误替换的概率。
+export function normalizeUserName(text: string, userName: string): string {
+  const name = (userName ?? '').trim();
+  if (!name || !text) return text;
+  const nameChars = [...name];
+  const textChars = [...text];
+  if (textChars.length < nameChars.length) return text;
+
+  const namePinyin = nameChars.map((c) => pinyin(c, { toneType: 'none' }).trim());
+  const textPinyin = textChars.map((c) => pinyin(c, { toneType: 'none' }).trim());
+
+  let out = '';
+  let i = 0;
+  while (i < textChars.length) {
+    if (i + nameChars.length <= textChars.length) {
+      let matched = true;
+      for (let j = 0; j < nameChars.length; j++) {
+        if (textPinyin[i + j] !== namePinyin[j]) { matched = false; break; }
+      }
+      if (matched) {
+        out += name;
+        i += nameChars.length;
+        continue;
+      }
+    }
+    out += textChars[i];
+    i++;
   }
   return out;
 }

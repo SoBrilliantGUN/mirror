@@ -50,7 +50,7 @@ import { TtsEngine, buildTtsEndpoints, type TtsEndpoint } from './speech/ttsEngi
 import { GreetingClipCache, type GreetingTts } from './speech/greetingClips';
 import { AcousticFeatureExtractor } from './speech/acousticFeatures';
 import { NlsSoundEventDetector } from './speech/nlsSoundEvent';
-import { normalizePersonaName } from './speech/nameNormalizer';
+import { normalizePersonaName, normalizeUserName } from './speech/nameNormalizer';
 import { buildInstruction, tailHint } from './speech/emotionInstruction';
 import { BackchannelEngine, BACKCHANNEL_PHRASES, concatPcm, hasVoicePcm } from './speech/backchannel';
 import { PERSONAS, resolvePersona, resolvePersonaDetails, resolveVoice } from './persona';
@@ -490,7 +490,7 @@ export class CallSession {
     }
     if (isFinal) {
       if (t) {
-        const cleanText = normalizePersonaName(t, this.persona.name);
+        const cleanText = normalizeUserName(normalizePersonaName(t, this.persona.name), this.cfg.userName);
         // 说话自动切语言：含中文回 zh、纯英文切 en，无语义字符（嗯/哦）保持不变。
         const detected = detectLang(cleanText);
         if (detected && detected !== this.lang) {
