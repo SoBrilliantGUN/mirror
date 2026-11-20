@@ -8,7 +8,7 @@ export function createSessionsStore(pool: Pool) {
     // 开一条会话记录，返回 id（挂断时用它补 ended_at）。
     async start(personaName: string, userId: string): Promise<string> {
       const { rows } = await pool.query(
-        'INSERT INTO call_sessions (character_id, user_id) VALUES ($1, $2) RETURNING id',
+        'INSERT INTO call_sessions (persona_name, user_id) VALUES ($1, $2) RETURNING id',
         [personaName, userId],
       );
       return rows[0].id as string;
@@ -31,12 +31,12 @@ export function createSessionsStore(pool: Pool) {
         pool.query('SELECT started_at FROM call_sessions WHERE id = $1', [currentId]),
         pool.query(
           `SELECT count(*)::int AS c FROM call_sessions
-            WHERE character_id = $1 AND user_id = $2 AND started_at >= now() - interval '7 days'`,
+            WHERE persona_name = $1 AND user_id = $2 AND started_at >= now() - interval '7 days'`,
           [personaName, userId],
         ),
         pool.query(
           `SELECT started_at, ended_at FROM call_sessions
-            WHERE character_id = $1 AND user_id = $2 AND id <> $3
+            WHERE persona_name = $1 AND user_id = $2 AND id <> $3
             ORDER BY started_at DESC LIMIT 1`,
           [personaName, userId, currentId],
         ),

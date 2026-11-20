@@ -9,7 +9,7 @@ export function createAskedQuestionsStore(pool: Pool) {
       if (q.length < 2) return;
       try {
         await pool.query(
-          `INSERT INTO asked_questions (user_id, character_id, question) VALUES ($1, $2, $3)`,
+          `INSERT INTO asked_questions (user_id, persona_name, question) VALUES ($1, $2, $3)`,
           [userId, personaName, q],
         );
       } catch {
@@ -20,7 +20,7 @@ export function createAskedQuestionsStore(pool: Pool) {
       try {
         const { rows } = await pool.query<{ question: string }>(
           `SELECT question FROM asked_questions
-            WHERE character_id = $1 AND user_id = $2 AND asked_at >= now() - ($3 || ' days')::interval
+            WHERE persona_name = $1 AND user_id = $2 AND asked_at >= now() - ($3 || ' days')::interval
             ORDER BY asked_at DESC LIMIT 20`,
           [personaName, userId, days],
         );

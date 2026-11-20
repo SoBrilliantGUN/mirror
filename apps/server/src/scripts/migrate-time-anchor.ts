@@ -23,7 +23,7 @@ async function main() {
       id: string; kind: string; content: string; created_at: Date; anchor_kind: string | null;
     }>(
       `SELECT id, kind, content, created_at, anchor_kind
-         FROM memories WHERE character_id = $1 AND user_id = $2 AND NOT superseded`,
+         FROM memories WHERE persona_name = $1 AND user_id = $2 AND NOT superseded`,
       [personaName, userId],
     );
     if (rows.length === 0) {

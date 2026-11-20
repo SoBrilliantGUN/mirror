@@ -7,8 +7,8 @@ import type { Embedder } from '../llm/embedding';
 // CopilotMemory，但只保留核心子集：constraint 硬召回、fact entity 覆盖、
 // episodic 30 天软衰减、dense+trgm 的 RRF 融合召回。不做软删除复活 / ACT-R 激活值那些重设施。
 //
-// 隔离维度：每条记忆同时挂 character_id（哪个陪伴者记得）+ user_id（哪位用户）。人物间画像
-// 完全隔离——程书衡不会读到只告诉沈知遥的事。character_id 用 persona.name（PERSONAS 主键）。
+// 隔离维度：每条记忆同时挂 persona_name（哪个陪伴者记得）+ user_id（哪位用户）。人物间画像
+// 完全隔离——程书衡不会读到只告诉沈知遥的事。persona_name 用 persona.name（PERSONAS 主键）。
 
 const EPISODIC_TTL_DAYS = 30;
 // profile 去重阈值：近重复人设/洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
@@ -43,7 +43,7 @@ function aboveFloor(m: Memory, now: Date): boolean {
 type MemoryRow = {
   id: string;
   user_id: string;
-  character_id: string;
+  persona_name: string;
   kind: string;
   content: string;
   entity_id: string | null;
@@ -77,7 +77,7 @@ function toMemory(r: MemoryRow): Memory {
   return {
     id: r.id,
     userId: r.user_id,
-    personaName: r.character_id,
+    personaName: r.persona_name,
     kind: r.kind as MemoryKind,
     content: r.content,
     entityId: r.entity_id,
@@ -135,7 +135,7 @@ export function createMemoryStore(
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind = $4 AND embedding IS NOT NULL AND ${ACTIVE}
+        WHERE persona_name = $1 AND user_id = $2 AND kind = $4 AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT $5`,
       [personaName, userId, toVectorLiteral(qvec), kind, topK],
@@ -148,7 +148,7 @@ export function createMemoryStore(
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, word_similarity($3, content) AS score
          FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind = $4 AND ${ACTIVE}
+        WHERE persona_name = $1 AND user_id = $2 AND kind = $4 AND ${ACTIVE}
           AND word_similarity($3, content) > 0.1
         ORDER BY score DESC
         LIMIT $5`,
@@ -189,7 +189,7 @@ export function createMemoryStore(
 
   const listActive = async (personaName: string, userId: string, kind: MemoryKind): Promise<Memory[]> => {
     const { rows } = await pool.query<MemoryRow>(
-      `SELECT * FROM memories WHERE character_id = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
+      `SELECT * FROM memories WHERE persona_name = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
       [personaName, userId, kind],
     );
     const now = new Date();
@@ -199,7 +199,7 @@ export function createMemoryStore(
   // 带时间锚点的活跃记忆（时间感知 upcomingDates 用；数量小，周期评估在 TS 侧 timeAware）。
   const listAnchored = async (personaName: string, userId: string): Promise<Memory[]> => {
     const { rows } = await pool.query<MemoryRow>(
-      `SELECT * FROM memories WHERE character_id = $1 AND user_id = $2 AND anchor_kind IS NOT NULL AND ${ACTIVE}`,
+      `SELECT * FROM memories WHERE persona_name = $1 AND user_id = $2 AND anchor_kind IS NOT NULL AND ${ACTIVE}`,
       [personaName, userId],
     );
     const now = new Date();
@@ -210,7 +210,7 @@ export function createMemoryStore(
   const getCoverage = async (personaName: string, userId: string): Promise<{ dimension: string; aspect: string | null; count: number }[]> => {
     const { rows } = await pool.query<{ dimension: string; aspect: string | null; count: number }>(
       `SELECT dimension, aspect, COUNT(*)::int AS count FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
+        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
           AND dimension IS NOT NULL AND dimension <> '' AND ${ACTIVE}
         GROUP BY dimension, aspect`,
       [personaName, userId],
@@ -225,7 +225,7 @@ export function createMemoryStore(
     if (kw.length < 2) return 0;
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
-        WHERE character_id = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
+        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
           AND NOT superseded AND content LIKE '%' || $3 || '%'`,
       [personaName, userId, kw],
     );
@@ -237,7 +237,7 @@ export function createMemoryStore(
     if (!id) return 0;
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
-        WHERE id = $1 AND character_id = $2 AND user_id = $3
+        WHERE id = $1 AND persona_name = $2 AND user_id = $3
           AND kind IN ('fact','preference','episodic') AND NOT superseded`,
       [id, personaName, userId],
     );
@@ -247,7 +247,7 @@ export function createMemoryStore(
   // 上限裁剪：某型活跃记忆超过 keep 条时，把最旧的归档（superseded，不硬删，可审计）。返回归档条数。
   const prune = async (personaName: string, userId: string, kind: MemoryKind, keep: number): Promise<number> => {
     const { rows } = await pool.query<{ id: string }>(
-      `SELECT id FROM memories WHERE character_id = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
+      `SELECT id FROM memories WHERE persona_name = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
       [personaName, userId, kind],
     );
     const excess = rows.slice(0, Math.max(0, rows.length - keep));
@@ -271,7 +271,7 @@ export function createMemoryStore(
     if (emb === null) {
       const { rows } = await pool.query<MemoryRow>(
         `SELECT * FROM memories
-          WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND content = $3 AND ${ACTIVE}
+          WHERE persona_name = $1 AND user_id = $2 AND kind = 'profile' AND content = $3 AND ${ACTIVE}
           LIMIT 1`,
         [personaName, userId, content],
       );
@@ -280,7 +280,7 @@ export function createMemoryStore(
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
-        WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND embedding IS NOT NULL AND ${ACTIVE}
+        WHERE persona_name = $1 AND user_id = $2 AND kind = 'profile' AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT 1`,
       [personaName, userId, toVectorLiteral(emb)],
@@ -298,7 +298,7 @@ export function createMemoryStore(
     userId: string,
     opts: { kind?: MemoryKind; since?: string } = {},
   ): Promise<Memory[]> => {
-    const conds = [`character_id = $1`, `user_id = $2`, ACTIVE];
+    const conds = [`persona_name = $1`, `user_id = $2`, ACTIVE];
     const params: unknown[] = [personaName, userId];
     if (opts.kind) {
       params.push(opts.kind);
@@ -334,7 +334,7 @@ export function createMemoryStore(
     }
     if (sets.length === 0) return getById(id);
     const { rows } = await pool.query<MemoryRow>(
-      `UPDATE memories SET ${sets.join(', ')} WHERE id = $1 AND character_id = $2 AND user_id = $3 RETURNING *`,
+      `UPDATE memories SET ${sets.join(', ')} WHERE id = $1 AND persona_name = $2 AND user_id = $3 RETURNING *`,
       params,
     );
     return rows[0] ? toMemory(rows[0]) : null;
@@ -344,7 +344,7 @@ export function createMemoryStore(
   const removeMemory = async (personaName: string, userId: string, id: string): Promise<number> => {
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
-        WHERE id = $1 AND character_id = $2 AND user_id = $3 AND NOT superseded`,
+        WHERE id = $1 AND persona_name = $2 AND user_id = $3 AND NOT superseded`,
       [id, personaName, userId],
     );
     return rowCount ?? 0;
@@ -390,7 +390,7 @@ export function createMemoryStore(
       if (kind === 'fact' && entityId) {
         const { rows } = await pool.query<{ id: string; version: number }>(
           `SELECT id, version FROM memories
-            WHERE character_id = $1 AND user_id = $2 AND kind = 'fact' AND entity_id = $3 AND ${ACTIVE}
+            WHERE persona_name = $1 AND user_id = $2 AND kind = 'fact' AND entity_id = $3 AND ${ACTIVE}
             ORDER BY version DESC`,
           [personaName, userId, entityId],
         );
@@ -407,7 +407,7 @@ export function createMemoryStore(
       const anchorAt = anchor?.kind === 'absolute' ? anchor.at : null;
       const anchorRule = anchor?.kind === 'periodic' ? anchor.rule : null;
       await pool.query(
-        `INSERT INTO memories (id, character_id, user_id, kind, content, entity_id, dimension, aspect, anchor_kind, anchor_at, anchor_rule, embedding, ttl_days, version)
+        `INSERT INTO memories (id, persona_name, user_id, kind, content, entity_id, dimension, aspect, anchor_kind, anchor_at, anchor_rule, embedding, ttl_days, version)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::vector, $13, $14)`,
         [id, personaName, userId, kind, content, entityId, dimension, aspect, anchorKind, anchorAt, anchorRule ? JSON.stringify(anchorRule) : null, toVectorLiteral(emb), ttlDays, version],
       );

@@ -2,13 +2,13 @@ import type { Pool } from 'pg';
 import type { GrowthGoal, GrowthGoalStore, GrowthStage } from '@mirror/contracts';
 
 // 成长课题存储（Life Coach 的「重骨架」）：GROW 四段 + 生命周期，跨通话持久。
-// 按 character_id + user_id 隔离（与记忆同口径）；status：active / done / archived。
+// 按 persona_name + user_id 隔离（与记忆同口径）；status：active / done / archived。
 // 「轻的表达」不在这里——这里只存结构化进度，话术化由 [GOAL] 块 + 模型完成。
 
 type GoalRow = {
   id: string;
   user_id: string;
-  character_id: string;
+  persona_name: string;
   title: string;
   goal: string | null;
   reality: string | null;
@@ -30,7 +30,7 @@ function toGoal(r: GoalRow): GrowthGoal {
   return {
     id: r.id,
     userId: r.user_id,
-    personaName: r.character_id,
+    personaName: r.persona_name,
     title: r.title,
     goal: r.goal,
     reality: r.reality,
@@ -55,7 +55,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
     async listActive(personaName, userId): Promise<GrowthGoal[]> {
       const { rows } = await pool.query<GoalRow>(
         `SELECT * FROM growth_goals
-          WHERE character_id = $1 AND user_id = $2 AND status = 'active'
+          WHERE persona_name = $1 AND user_id = $2 AND status = 'active'
           ORDER BY updated_at ASC`,
         [personaName, userId],
       );
@@ -66,14 +66,14 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
       // 同名活跃课题复用（标题去重），避免后台巩固反复建「和妈妈的边界」这种重复条目。
       const { rows: dup } = await pool.query<GoalRow>(
         `SELECT * FROM growth_goals
-          WHERE character_id = $1 AND user_id = $2 AND title = $3 AND status = 'active'
+          WHERE persona_name = $1 AND user_id = $2 AND title = $3 AND status = 'active'
           ORDER BY created_at ASC LIMIT 1`,
         [personaName, userId, input.title],
       );
       if (dup[0]) return toGoal(dup[0]);
 
       const { rows } = await pool.query<GoalRow>(
-        `INSERT INTO growth_goals (character_id, user_id, title)
+        `INSERT INTO growth_goals (persona_name, user_id, title)
          VALUES ($1, $2, $3) RETURNING *`,
         [personaName, userId, input.title],
       );
@@ -101,7 +101,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
       vals.push(id, personaName, userId);
       const { rows } = await pool.query<GoalRow>(
         `UPDATE growth_goals SET ${fields.join(', ')}
-          WHERE id = $${i} AND character_id = $${i + 1} AND user_id = $${i + 2} RETURNING *`,
+          WHERE id = $${i} AND persona_name = $${i + 1} AND user_id = $${i + 2} RETURNING *`,
         vals,
       );
       return rows[0] ? toGoal(rows[0]) : null;
@@ -111,7 +111,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
       await pool.query(
         `UPDATE growth_goals SET status = 'done', stage = 'done',
            progress_note = COALESCE($4, progress_note), updated_at = now()
-          WHERE id = $1 AND character_id = $2 AND user_id = $3`,
+          WHERE id = $1 AND persona_name = $2 AND user_id = $3`,
         [id, personaName, userId, note],
       );
     },
@@ -119,7 +119,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
     async archive(personaName, userId, id): Promise<void> {
       await pool.query(
         `UPDATE growth_goals SET status = 'archived', updated_at = now()
-          WHERE id = $1 AND character_id = $2 AND user_id = $3`,
+          WHERE id = $1 AND persona_name = $2 AND user_id = $3`,
         [id, personaName, userId],
       );
     },
@@ -127,7 +127,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
     async touch(personaName, userId, id): Promise<void> {
       await pool.query(
         `UPDATE growth_goals SET last_reviewed_at = now(), updated_at = now()
-          WHERE id = $1 AND character_id = $2 AND user_id = $3`,
+          WHERE id = $1 AND persona_name = $2 AND user_id = $3`,
         [id, personaName, userId],
       );
     },

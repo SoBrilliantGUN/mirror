@@ -10,7 +10,7 @@ export function createConversationSummariesStore(pool: Pool) {
       if (s.length < 2) return;
       try {
         await pool.query(
-          `INSERT INTO conversation_summaries (user_id, character_id, summary) VALUES ($1, $2, $3)`,
+          `INSERT INTO conversation_summaries (user_id, persona_name, summary) VALUES ($1, $2, $3)`,
           [userId, personaName, s],
         );
       } catch {
@@ -21,7 +21,7 @@ export function createConversationSummariesStore(pool: Pool) {
       try {
         const { rows } = await pool.query<{ summary: string }>(
           `SELECT summary FROM conversation_summaries
-            WHERE character_id = $1 AND user_id = $2 AND created_at >= now() - ($3 || ' days')::interval
+            WHERE persona_name = $1 AND user_id = $2 AND created_at >= now() - ($3 || ' days')::interval
             ORDER BY created_at ASC`,
           [personaName, userId, days],
         );

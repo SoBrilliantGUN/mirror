@@ -3,13 +3,13 @@ import type { Pool } from 'pg';
 import type { SelfAdded, SelfAddedStore } from '@mirror/contracts';
 
 // 人设增补存储：陪伴者底座之外的软细节（爱好/口味/小回忆/习惯）。独立于用户长期记忆。
-// 每条按 character_id + user_id 隔离（同用户画像隔离原则）。提及驱动衰减：listActive 只出活跃条，
+// 每条按 persona_name + user_id 隔离（同用户画像隔离原则）。提及驱动衰减：listActive 只出活跃条，
 // touch 刷新 last_mentioned_at（对话中再次被触碰），archiveStale 把长期未提及的归档（active=false，不硬删）。
 
 type Row = {
   id: string;
   user_id: string;
-  character_id: string;
+  persona_name: string;
   category: string;
   content: string;
   mention_count: number;
@@ -22,7 +22,7 @@ function toSelfAdded(r: Row): SelfAdded {
   return {
     id: r.id,
     userId: r.user_id,
-    personaName: r.character_id,
+    personaName: r.persona_name,
     category: r.category,
     content: r.content,
     mentionCount: r.mention_count,
@@ -36,7 +36,7 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
   return {
     async listActive(personaName, userId): Promise<SelfAdded[]> {
       const { rows } = await pool.query<Row>(
-        `SELECT * FROM persona_additions WHERE character_id = $1 AND user_id = $2 AND active ORDER BY created_at ASC`,
+        `SELECT * FROM persona_additions WHERE persona_name = $1 AND user_id = $2 AND active ORDER BY created_at ASC`,
         [personaName, userId],
       );
       return rows.map(toSelfAdded);
@@ -45,7 +45,7 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
     async write(personaName, userId, { category, content }): Promise<SelfAdded> {
       const id = randomUUID();
       await pool.query(
-        `INSERT INTO persona_additions (id, character_id, user_id, category, content) VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO persona_additions (id, persona_name, user_id, category, content) VALUES ($1, $2, $3, $4, $5)`,
         [id, personaName, userId, category, content],
       );
       const { rows } = await pool.query<Row>(`SELECT * FROM persona_additions WHERE id = $1`, [id]);
@@ -55,7 +55,7 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
     async touch(personaName, userId, ids): Promise<void> {
       if (ids.length === 0) return;
       await pool.query(
-        `UPDATE persona_additions SET mention_count = mention_count + 1, last_mentioned_at = now() WHERE character_id = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
+        `UPDATE persona_additions SET mention_count = mention_count + 1, last_mentioned_at = now() WHERE persona_name = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
         [personaName, userId, ids],
       );
     },
@@ -63,7 +63,7 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
     async archiveStale(personaName, userId, ttlDays): Promise<number> {
       const { rows } = await pool.query<{ id: string }>(
         `UPDATE persona_additions SET active = false
-          WHERE character_id = $1 AND user_id = $2 AND active
+          WHERE persona_name = $1 AND user_id = $2 AND active
             AND last_mentioned_at < now() - make_interval(days => $3)
           RETURNING id`,
         [personaName, userId, ttlDays],
