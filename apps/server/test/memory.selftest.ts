@@ -13,7 +13,8 @@ import {
   type HistoryEntry,
 } from '../src/brain/context';
 import { compressHistory, pickLevel, estimateHistoryTokens, historyToText } from '../src/brain/compress';
-import { parseDetail, cosine, formatPersonaBlock, type PersonaDetail } from '../src/persona/loadPersona';
+import { parseDetail, formatPersonaBlock, type PersonaDetail } from '../src/persona/loadPersona';
+import { cosine } from '../src/vector';
 import { parseExtraction, parseRetraction } from '../src/brain/consolidate/memoryTurn';
 import { mergeRecalled } from '../src/brain/assemble';
 

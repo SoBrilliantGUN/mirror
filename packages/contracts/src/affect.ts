@@ -1,4 +1,12 @@
 // —— L3 情绪 / 状态 / 结果：打分（Affect）→ 判定（Mode/Stance/Emotion）→ 返回（TurnResult）——
+//
+// 五个都跟「情绪」有关、但语义不同的概念（接手时最容易混，先背这张表）：
+//   Affect      = 本轮瞬时三维打分（valence/arousal/dominance + incongruence），一次性，每轮重打
+//   MoodState   = Affect 的多轮 EMA 平滑（mood.ts 的 updateMood），是「长期心境轨迹」
+//   Mode        = 升/降级开关（casual/careful），由 Affect + 安全旗标硬判定，带防抖（ModeTracker）
+//   Stance      = 由支配度驱动的「陪(accompany) vs 引(guide)」姿态
+//   EmotionTag  = 喂给 TTS 的「陪伴者这一句的语气」（warm/tender/steady/natural），逐句可再细分
+// 另：Frame（friend/coach，见 coach.ts）与 Mode 正交——一个是「交互框架」，一个是「情绪强度」。
 import type { SafetyAction, DependenceAction } from './safety';
 import type { Frame } from './coach';
 

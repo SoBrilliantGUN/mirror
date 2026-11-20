@@ -1,4 +1,5 @@
 import type { Embedder } from '../llm/embedding';
+import { cosine } from '../vector';
 import { PERSONA_DETAILS } from './generated';
 import { parseDetail, type PersonaDetail } from './detail';
 
@@ -14,20 +15,6 @@ export type { PersonaDetail };
 // 取某人物烤好的详情；不存在返回 []。
 export function loadPersonaDetails(name: string): PersonaDetail[] {
   return PERSONA_DETAILS[name] ?? [];
-}
-
-// 余弦相似度。可单测。
-export function cosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 // 命中详情格式化成一个 [PERSONA] 块（注入 user 消息，供模型当背景用）。可单测。

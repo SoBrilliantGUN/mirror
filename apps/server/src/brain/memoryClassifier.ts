@@ -1,6 +1,7 @@
 import type { MemoryKind } from '@mirror/contracts';
 import type { DeepSeek } from '../llm/deepseek';
-import { parseJsonish } from './parse';
+import { classifyJson } from './classify';
+import { parseEnum, parseJsonish } from './parse';
 
 // 记忆分类器：写入时用 LLM（temperature=0）确定性分类，替代「信任 Agent 自报 kind」。
 // 参考 kima 的 memory_classifier.py——四型（约束/事实/偏好/情节）不能靠 Agent 随手挑，
@@ -18,34 +19,30 @@ const CLASSIFY_SYSTEM_PROMPT = `你是记忆分类助手。把传入的记忆文
 只输出这个 JSON：
 {"memory_type": "constraint" | "fact" | "preference" | "episodic" | "profile"}`;
 
+const MEMORY_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'] as const;
+
+function parseMemoryTypeObj(o: Record<string, unknown>): MemoryKind | null {
+  return parseEnum(o.memory_type, MEMORY_KINDS);
+}
+
 export async function classifyMemory(
   llm: DeepSeek,
   model: string,
   raw: string,
 ): Promise<MemoryKind | null> {
-  try {
-    const out = await llm.chat(
-      [
-        { role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
-        { role: 'user', content: raw },
-      ],
-      { model, temperature: 0, maxTokens: 100 },
-    );
-    const type = parseMemoryType(out);
-    return type;
-  } catch {
+  return classifyJson(llm, model, {
+    system: CLASSIFY_SYSTEM_PROMPT,
+    user: raw,
+    maxTokens: 100,
+    parse: parseMemoryTypeObj,
     // LLM 分类失败 → 回退 null（信任 Agent 自报 kind，不静默降级到可能漏红线的桶）。
-    return null;
-  }
+    fallback: null,
+  });
 }
 
 // 纯函数：从分类器输出里抽 memory_type，非法/缺失返回 null。可单测。
 export function parseMemoryType(raw: string): MemoryKind | null {
   const o = parseJsonish(raw);
   if (!o) return null;
-  const type = o.memory_type;
-  if (type === 'constraint' || type === 'fact' || type === 'preference' || type === 'episodic' || type === 'profile') {
-    return type;
-  }
-  return null;
+  return parseMemoryTypeObj(o);
 }

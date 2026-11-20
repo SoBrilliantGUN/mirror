@@ -1,7 +1,7 @@
 import type { SelfAdded, SelfAddedStore } from '@mirror/contracts';
 import type { DeepSeek } from '../../llm/deepseek';
 import type { Embedder } from '../../llm/embedding';
-import { cosine } from '../../persona/loadPersona';
+import { cosine } from '../../vector';
 import { parseJsonish } from '../parse';
 
 // 人设增补（后台 Agent，不进热路径）：把「陪伴者自己长出的软细节」固化下来。

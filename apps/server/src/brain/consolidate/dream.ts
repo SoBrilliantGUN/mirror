@@ -1,6 +1,7 @@
 import type { MemoryKind, MemoryStore } from '@mirror/contracts';
 import type { DeepSeek } from '../../llm/deepseek';
 import type { Embedder } from '../../llm/embedding';
+import { cosine } from '../../vector';
 import { reflectOnMemory } from './reflect';
 import { parseJsonish } from '../parse';
 
@@ -11,19 +12,6 @@ import { parseJsonish } from '../parse';
 // 全部 best-effort，失败只告警不阻断；软删除（superseded），可审计不硬删。
 
 const MERGE_SIM = 0.9; // 合并阈值：余弦相似度达到即视为同一事实的近重复（对齐写入侧 PERSONA_DUP_SIM=0.9；实测真近重复≈0.88~0.95，0.95 会全漏）
-
-function cosine(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const d = Math.sqrt(na) * Math.sqrt(nb);
-  return d === 0 ? 0 : dot / d;
-}
 
 export type DreamResult = {
   abstractedFacts: number;

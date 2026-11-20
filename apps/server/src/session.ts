@@ -18,7 +18,7 @@
 // 会话级字段分组：
 //   · 注入共享资源（不随通话重置）: cfg / llm / safetyLlm / embedder / memory / tts / greetingClips …
 //   · 会话状态（每通重置）: tracker / coachTracker / mood / lastAffect / persona / lang / history …
-//   · 实时互锁（计时器 + 代际中止）: currentGeneration / currentAbort / speaking / agentAudible …
+//   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …
 // ============================================================
 import type {
   Affect,
@@ -63,10 +63,10 @@ import { SEARCH_TOOL, pickFiller } from './brain/search';
 import { bochaSearch } from './search/bocha';
 import { streamMessages, streamMessagesWithTools, generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages } from './brain/assemble';
-import { consolidateTurn, prefetchNextTurn, createPrefetchCache } from './brain/consolidate/memoryTurn';
-import { consolidateGoal } from './brain/consolidate/goalTurn';
-import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './brain/consolidate/selfAddTurn';
+import { createPrefetchCache } from './brain/consolidate/memoryTurn';
+import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
 import { classifyMemory } from './brain/memoryClassifier';
+import { GenerationGate } from './brain/generation';
 import { classifySegmentEmotion } from './brain/segmentEmotion';
 import { compressHistory } from './brain/compress';
 import { summarizeCall, compressSummaries } from './brain/recentSummary';
@@ -210,8 +210,7 @@ export class CallSession {
   private pendingVocals = new VocalEventAggregator();
   private vocalTimer: ReturnType<typeof setTimeout> | null = null;
   private lastVocalRespondAt = 0;
-  private currentGeneration = 0;
-  private currentAbort: AbortController | null = null;
+  private readonly gate = new GenerationGate(); // 代际中止门：哪次生成还作数 + 对应 AbortSignal
   private lastUserTurn: { text: string; vocals: VocalizationEvent[]; dominantVocal: DominantVocal } | null = null;
   private reanswerTimer: ReturnType<typeof setTimeout> | null = null;
   private reanswerCount = 0;
@@ -501,8 +500,7 @@ export class CallSession {
     if (t) {
       this.recentVoiceAt = Date.now();
       if (this.speaking) {
-        this.currentGeneration++;
-        this.currentAbort?.abort();
+        this.gate.invalidate();
         this.speaking = false;
       }
       this.markUserVoice();
@@ -536,9 +534,7 @@ export class CallSession {
   private async respond(userText: string, vocals: VocalizationEvent[] = [], dominantVocal: DominantVocal = null) {
     if (!this.rtc) return;
     const tStart = Date.now();
-    const myGen = ++this.currentGeneration;
-    this.currentAbort = new AbortController();
-    const signal = this.currentAbort.signal;
+    const { gen: myGen, signal } = this.gate.begin();
     const searchEnabled = Boolean(this.cfg.bochaApiKey);
     this.speaking = true;
     let reachedEnd = false;
@@ -582,7 +578,7 @@ export class CallSession {
       this.obs.span('recall', () => recallContext(assembleDeps, { text: userText, history: this.history, loadedDetails: this.loadedDetails })),
       this.askedQuestions.recent(this.persona.name, this.userId, 3),
     ]);
-    if (myGen !== this.currentGeneration) return;
+    if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
     this.lastAffect = plan.affect;
     const disinterest = evaluateDisinterest(plan.affect.arousal, this.lastReplyLatencyMs, this.disinterestStreak);
@@ -694,7 +690,7 @@ export class CallSession {
       let nextP: Promise<{ text: string; emotion: EmotionTag } | null> = prefetch();
 
       while (cur) {
-        if (myGen !== this.currentGeneration) break;
+        if (!this.gate.isCurrent(myGen)) break;
         full += await speakOne(cur.text, i, cur.emotion);
         i++;
         cur = await nextP;
@@ -711,7 +707,7 @@ export class CallSession {
       let spoken = '';
       let i = 0;
       for await (const ev of streamMessagesWithTools(this.llm, this.cfg.generateModel, messages, [SEARCH_TOOL])) {
-        if (myGen !== this.currentGeneration) return;
+        if (!this.gate.isCurrent(myGen)) return;
         if (ev.kind === 'sentence') {
           const segEmotion = i === 0
             ? plan.emotion
@@ -722,7 +718,7 @@ export class CallSession {
           searchCall = ev.calls.find((c) => c.name === 'search_web') ?? null;
         }
       }
-      if (myGen !== this.currentGeneration) return;
+      if (!this.gate.isCurrent(myGen)) return;
       if (!searchCall || spoken.trim()) {
         console.log('[search] 本轮未发起搜索（模型直接作答）');
         fullText = spoken;
@@ -740,7 +736,7 @@ export class CallSession {
           rate: this.persona.rate ?? 1.0,
           signal,
         })) {
-          if (myGen !== this.currentGeneration) break;
+          if (!this.gate.isCurrent(myGen)) break;
           this.rtc?.pushAgentPcm(pcm);
         }
         const t0 = Date.now();
@@ -761,7 +757,7 @@ export class CallSession {
         fullText = await speakSegments(streamMessages(this.llm, this.cfg.generateModel, [...messages, assistantMsg, toolMsg]));
       }
     }
-    if (myGen === this.currentGeneration) {
+    if (this.gate.isCurrent(myGen)) {
       this.lastUserTurn = null;
       this.reanswerCount = 0;
       this.history.push({ kind: 'turn', role: 'user', text: userText });
@@ -813,15 +809,21 @@ export class CallSession {
         this.idleFired = true;
       }
 
-      consolidateTurn({
+      consolidateAfterTurn({
         llm: this.llm,
         model: this.cfg.generateModel,
-        store: this.memory,
+        memory: this.memory,
+        goals: this.goals,
+        selfAdded: this.selfAdded,
+        embedder: this.embedder,
         classify: (raw) => classifyMemory(this.llm, this.cfg.generateModel, raw),
         userId: this.userId,
         characterId: this.persona.name,
         userText,
         agentText: fullText.trim(),
+        personaSystemPrompt: this.persona.systemPrompt,
+        frame: plan.frame,
+        prefetchCache: this.prefetchCache,
         retractIds: this.prevTurnMemoryIds,
       })
         .then((res) => {
@@ -829,44 +831,9 @@ export class CallSession {
           for (const f of res.facts) this.userSaid.push(f);
         })
         .catch((e) => console.warn('[memory] 后台写记忆失败：', e));
-      prefetchNextTurn(
-        { store: this.memory, userId: this.userId, characterId: this.persona.name, query: userText },
-        this.prefetchCache,
-      ).catch((e) => console.warn('[memory] 后台预取失败：', e));
-      if (plan.frame === 'coach') {
-        consolidateGoal({
-          llm: this.llm,
-          model: this.cfg.generateModel,
-          store: this.goals,
-          userId: this.userId,
-          characterId: this.persona.name,
-          userText,
-          agentText: fullText.trim(),
-        }).catch((e) => console.warn('[goal] 后台课题巩固失败：', e));
-      }
-      consolidateSelfAdded({
-        llm: this.llm,
-        model: this.cfg.generateModel,
-        store: this.selfAdded,
-        userId: this.userId,
-        characterId: this.persona.name,
-        agentText: fullText.trim(),
-        personaSystemPrompt: this.persona.systemPrompt,
-        embedder: this.embedder,
-      }).catch((e) => console.warn('[self-add] 后台写增补失败：', e));
-      touchSelfAdded({
-        embedder: this.embedder,
-        store: this.selfAdded,
-        userId: this.userId,
-        characterId: this.persona.name,
-        text: `${userText}\n${fullText.trim()}`,
-      }).catch((e) => console.warn('[self-add] 后台提及检测失败：', e));
-      this.selfAdded.archiveStale(this.persona.name, this.userId, SELF_ADDED_TTL_DAYS).catch((e) =>
-        console.warn('[self-add] 归档过期失败：', e),
-      );
     }
     } finally {
-      if (myGen === this.currentGeneration && !reachedEnd) {
+      if (this.gate.isCurrent(myGen) && !reachedEnd) {
         this.speaking = false;
         this.agentAudible = false;
         this.lastUserVoiceAt = Date.now();
@@ -878,9 +845,7 @@ export class CallSession {
 
   private async speakProactive(kind: 'greeting' | 'nudge' | 'followup' | 'checkin' | 'farewell' | 'coachClose') {
     if (!this.rtc || this.speaking) return;
-    const myGen = ++this.currentGeneration;
-    this.currentAbort = new AbortController();
-    const signal = this.currentAbort.signal;
+    const { gen: myGen, signal } = this.gate.begin();
     this.speaking = true;
     let reachedEnd = false;
     console.log('[proactive] 开始：', kind);
@@ -900,7 +865,7 @@ export class CallSession {
         },
       );
       const text = await generateProactiveText(this.llm, this.cfg.generateModel, system);
-      if (myGen !== this.currentGeneration) return;
+      if (!this.gate.isCurrent(myGen)) return;
       const { clean: seg, awaits } = extractAwaits(text.trim());
       if (!seg) return;
       console.log('[proactive] 文本：', seg);
@@ -913,7 +878,7 @@ export class CallSession {
         rate: this.persona.rate ?? 1.0,
         signal,
       }), { text: seg });
-      if (myGen === this.currentGeneration) {
+      if (this.gate.isCurrent(myGen)) {
         this.history.push({ kind: 'turn', role: 'agent', text: seg });
         this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: seg });
         reachedEnd = true;
@@ -935,7 +900,7 @@ export class CallSession {
     } catch (e) {
       console.warn('[proactive] 主动发话失败：', e);
     } finally {
-      if (myGen === this.currentGeneration && !reachedEnd) {
+      if (this.gate.isCurrent(myGen) && !reachedEnd) {
         this.speaking = false;
         this.agentAudible = false;
         this.lastUserVoiceAt = Date.now();
@@ -1061,8 +1026,7 @@ export class CallSession {
     console.log(`[RTC] 打断（interrupt，via ${source}）`);
     void this.obs.trace('interrupt', { metadata: { characterId: this.persona.name, source } }, async () => {});
     this.lastBargeInAt = Date.now();
-    this.currentGeneration++;
-    this.currentAbort?.abort();
+    this.gate.invalidate();
     this.rtc?.clear();
     this.backchannel.reset();
     this.speaking = false;
@@ -1109,8 +1073,7 @@ export class CallSession {
         .then((s) => this.conversationSummaries.save(this.persona.name, this.userId, s))
         .catch((e) => console.warn('[summary] 写最近概要失败：', e));
     }
-    this.currentGeneration++;
-    this.currentAbort?.abort();
+    this.gate.invalidate();
     this.rtc?.close();
     this.rtc = null;
     this.sed?.close();

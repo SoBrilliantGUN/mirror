@@ -1,5 +1,6 @@
 import type { DeepSeek } from '../llm/deepseek';
-import { parseJsonish } from './parse';
+import { classifyJson } from './classify';
+import { parseBool, parseJsonish } from './parse';
 
 // 道别检测：用 LLM 判定「对方这一轮是否在道别/要结束通话」，替代原来的关键词正则。
 // 正则只看陪伴者自己的回复、漏判用户的再见；这里改用模型直接判用户意图，temperature 0 确定性输出。
@@ -15,26 +16,23 @@ const FAREWELL_SYSTEM_PROMPT = `你是道别意图判定器。读「对方这一
 {"farewell": true | false}`;
 
 // 纯函数：从模型输出里抽 farewell 布尔，非法/缺失返回 false。可单测。
+function parseFarewellObj(o: Record<string, unknown>): boolean {
+  return parseBool(o.farewell);
+}
 export function parseFarewell(raw: string): boolean {
   const o = parseJsonish(raw);
   if (!o) return false;
-  const v = o.farewell;
-  return v === true || v === 'true';
+  return parseFarewellObj(o);
 }
 
 export async function classifyFarewell(llm: DeepSeek, model: string, text: string): Promise<boolean> {
   if (!text.trim()) return false; // 纯哭/纯笑无字，谈不上道别
-  try {
-    const out = await llm.chat(
-      [
-        { role: 'system', content: FAREWELL_SYSTEM_PROMPT },
-        { role: 'user', content: text },
-      ],
-      { model, temperature: 0, maxTokens: 50 },
-    );
-    return parseFarewell(out);
-  } catch {
+  return classifyJson(llm, model, {
+    system: FAREWELL_SYSTEM_PROMPT,
+    user: text,
+    maxTokens: 50,
+    parse: parseFarewellObj,
     // 分类失败 → 保守判 false（宁可多聊一句，也别误挂断）。
-    return false;
-  }
+    fallback: false,
+  });
 }

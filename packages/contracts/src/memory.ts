@@ -1,4 +1,8 @@
 import type { TimeAnchor } from './time';
+import type { PersonaName } from './persona';
+
+// 字段语义提醒：本文件里所有 `characterId` 存的都是 `PersonaName`（陪伴者的中文名，如 "程书衡"），
+// 不是数字/UUID ID。它同时是「人物隔离」的维度——程书衡不会读到只告诉沈知遥的事。
 
 // —— 长期记忆（五型，参考 kima 的 CopilotMemory 分类；embedding + pgvector 混合召回）——
 // constraint = 硬规则/红线（无条件在场）；fact = 稳定事实（entity_id 覆盖）；
@@ -10,7 +14,7 @@ export type MemoryKind = 'constraint' | 'fact' | 'preference' | 'episodic' | 'pr
 export type Memory = {
   id: string;
   userId: string;
-  characterId: string;
+  characterId: PersonaName;
   kind: MemoryKind;
   content: string;
   entityId: string | null;
