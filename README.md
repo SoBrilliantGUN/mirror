@@ -190,7 +190,7 @@ monorepo 三块各管各的，**没有统一的编译命令**——改哪层就�
 ## 测试与常用脚本
 
 ```bash
-npm test              # 跑全部 selftest（decide/speech/acoustic/resample/memory/timeAware/safety/selfAdd/interest/search）
+npm test              # 跑全部 selftest（16 个：decide/speech/acoustic/resample/memory/timeAware/safety/selfAdd/topicSwitch/search/activation/farewell/ontology/coach/speakPipeline/session）
 npm run typecheck     # tsc --noEmit 全量类型检查
 npm run demo          # 无语音的文字 demo（run-demo）
 npm run samples       # 生成情绪样例

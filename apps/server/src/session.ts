@@ -4,13 +4,15 @@
 // 职责地图（本文件唯一要背的心智模型）：
 //   · 建连        handleOffer —— 建 RTC/ASR/NLS，预热招呼语，回 SDP
 //   · 实时接入    onAsrResult —— ASR 流式 → 打断/抢话判定 → respond
-//   · 对话回合    respond —— 决策(planTurn) + 召回(recallContext) + 装配 + 逐句流水线
-//   · 主动发话    armIdleCheck / speakProactive —— 追问/checkin/找话题/道别/教练收尾
-//   · 打断/抢话   handleBargeIn / doBargeIn —— 中止生成 + 误打断重答(armReanswer)
-//   · 非言语发声  scheduleVocalRespond —— 哭/笑去抖后触发一次 respond
+//   · 对话回合    respond —— 决策(planTurn) + 召回(recallContext) + 装配 → streamTurnSpeech
+//   · 主动发话    turnTaking.armIdleCheck / speakProactive —— 追问/checkin/找话题/道别/教练收尾
+//   · 打断/抢话   turnTaking.handleBargeIn / doBargeIn —— 中止生成 + 误打断重答
+//   · 非言语发声  turnTaking.scheduleVocalRespond —— 哭/笑去抖后触发一次 respond
 //   · 挂断收尾    teardownCall —— 写通话概要 + 结束会话
 //
 // 已拆出去的（这里只留窄回调，不背实现）：
+//   · 主动发话/打断/收尾状态机     → turnTaking.ts（TurnTakingController，借 host 回调触发 respond/speakProactive）
+//   · 逐句流水线（生成→切句→TTS→搜索）→ speech/speakPipeline.ts（streamTurnSpeech）
 //   · TTS 合成 + 多端点重试      → speech/ttsEngine.ts（TtsEngine）
 //   · 招呼语片段缓存/落盘         → speech/greetingClips.ts（GreetingClipCache）
 //   · 后台记忆/课题/人设巩固      → brain/consolidate/（memoryTurn / goalTurn / selfAddTurn / dream）
@@ -18,12 +20,11 @@
 // 会话级字段分组：
 //   · 注入共享资源（不随通话重置）: cfg / llm / safetyLlm / embedder / memory / tts / greetingClips …
 //   · 会话状态（每通重置）: tracker / coachTracker / mood / lastAffect / persona / lang / history …
-//   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …
+//   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …（turn-taking 共享状态见 turnTaking.ts）
 // ============================================================
 import type {
   Affect,
   DependenceSignals,
-  EmotionTag,
   GrowthGoalStore,
   MemoryStore,
   MoodState,
@@ -33,7 +34,7 @@ import type {
   VocalizationEvent,
 } from '@mirror/contracts';
 import type { Config } from './config';
-import type { DeepSeek, ChatMessage, ToolCall } from './llm/deepseek';
+import type { DeepSeek } from './llm/deepseek';
 import type { Embedder } from './llm/embedding';
 import type { Obs } from './obs/langfuse';
 import type { HistorySummarizer } from './brain/compress';
@@ -42,31 +43,29 @@ import type { PersonaDetail } from './persona/loadPersona';
 import type { DominantVocal } from './speech/vocalEvents';
 import type { PrefetchCache } from './brain/assemble';
 import type { OfferBody, OfferResult } from './router';
-import { createRtcPeer } from './rtc/webrtc';
+import { createRtcPeer, type RtcCallbacks, type RtcPeer, type RtcIceOptions } from './rtc/webrtc';
 import { ParaformerRealtimeASR } from './speech/paraformerRealtime';
 import { streamTTS } from './speech/cosyvoiceRealtime';
-import { TtsEngine, buildTtsEndpoints } from './speech/ttsEngine';
-import { GreetingClipCache } from './speech/greetingClips';
+import { TtsEngine, buildTtsEndpoints, type TtsEndpoint } from './speech/ttsEngine';
+import { GreetingClipCache, type GreetingTts } from './speech/greetingClips';
 import { AcousticFeatureExtractor } from './speech/acousticFeatures';
 import { NlsSoundEventDetector } from './speech/nlsSoundEvent';
 import { normalizePersonaName } from './speech/nameNormalizer';
-import { VocalEventAggregator } from './speech/vocalEvents';
-import { buildInstruction, EMOTION_PROSODY, tailHint } from './speech/emotionInstruction';
+import { buildInstruction, tailHint } from './speech/emotionInstruction';
 import { BackchannelEngine, BACKCHANNEL_PHRASES, concatPcm, hasVoicePcm } from './speech/backchannel';
 import { PERSONAS, resolvePersona, resolvePersonaDetails, resolveVoice } from './persona';
 import { createPersonaMatcher } from './persona/loadPersona';
+import { streamTurnSpeech } from './speech/speakPipeline';
+import { TurnTakingController, DEFAULT_TIMING, type TurnTakingTiming, type TurnTakingHost, type ProactiveKind } from './turnTaking';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { planTurn } from './brain/turn';
 import { evaluateDisinterest, evaluatePerfunctory } from './brain/topicSwitch';
-import { SEARCH_TOOL, pickFiller } from './brain/search';
-import { bochaSearch } from './search/bocha';
-import { streamMessages, streamMessagesWithTools, generateProactiveText, extractAwaits } from './brain/generate';
+import { generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/assemble';
 import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
 import { classifyMemory } from './brain/memoryClassifier';
 import { GenerationGate } from './brain/generationGate';
-import { classifySegmentEmotion } from './brain/segmentEmotion';
 import { compressHistory } from './brain/compress';
 import { summarizeCall, compressSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
@@ -100,19 +99,6 @@ function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'imme
 const isAsking = (text: string) => /[？?]/.test(text);
 
 // string[] / AsyncIterable 统一成 AsyncIterator，供逐句流水线预取下一句用。
-function asyncIterator<T>(segments: AsyncIterable<T> | T[]): AsyncIterator<T> {
-  if (Symbol.asyncIterator in (segments as AsyncIterable<T>)) {
-    return (segments as AsyncIterable<T>)[Symbol.asyncIterator]();
-  }
-  const arr = segments as T[];
-  let idx = 0;
-  return {
-    async next(): Promise<IteratorResult<T>> {
-      return idx < arr.length ? { value: arr[idx++], done: false } : { value: undefined as T, done: true };
-    },
-  };
-}
-
 // 从对方一句话判语言：含中文 → zh；纯英文 → en；无语义字符（嗯/哦/数字/标点）→ null（不切换，保持现状）。
 // 说话自动切换语言用，替代原来的中英文开关。
 function detectLang(text: string): 'zh' | 'en' | null {
@@ -121,32 +107,7 @@ function detectLang(text: string): 'zh' | 'en' | null {
   return null;
 }
 
-// 主动发话计时（全部程序计时，不靠 LLM 自觉）。
-const FOLLOWUP_MS = 5000;
-
-// 非问句结尾后的「轻问找话题」等待时长：根据对方当前情绪动态决定，不写死一个数。
-// 越沉（效价越负 / 唤醒越高 / 越无力 / 逞强）越要给人空间、等得越久；轻松时短一点。
-function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): number {
-  const m = mood ?? { valence: 0, arousal: 0, dominance: 0 };
-  let ms = 10000 // 中性基线 10s
-    - Math.max(0, m.valence) * 2000       // 轻松（效价正）→ 早点接话
-    + Math.max(0, -m.valence) * 2500      // 低落（效价负）→ 多给空间
-    + Math.max(0, m.arousal) * 1500       // 激动 / 崩溃 → 别催
-    + Math.max(0, -m.dominance) * 1500;   // 无力 / 被压着 → 多给空间
-  if (incongruence) ms += 4000;           // 逞强（嘴上平静心里慌）→ 尤其别急着打断
-  return Math.round(Math.min(Math.max(ms, 5000), 24000)); // 夹在 5s ~ 24s
-}
-const NO_REPLY_LIMIT = 3; // 1 次没答→自问自答，2 次→问"还在吗"，3 次→情绪化收尾
-const COACH_SILENT_MS = 30000;
-const COACH_CLOSE_MS = 30000;
-const MIN_SEARCH_MS = 1500;
-const REANSWER_MS = 2500;
-const REANSWER_LIMIT = 2;
-const INTERRUPT_GRACE_MS = 700;
-const TOPIC_DRIFT_LIMIT = 3;
-const VOCAL_DEBOUNCE_MS = 3000;
-const VOCAL_MAX_HOLD_MS = 6000;
-const VOCAL_COOLDOWN_MS = 8000;
+const TOPIC_DRIFT_LIMIT = 3; // 连续提问上限（换话题检测，与主动发话计时无关）
 
 export type SessionDeps = {
   cfg: Config;
@@ -166,6 +127,13 @@ export type SessionDeps = {
   memoryBudget: number;
   historyBudget: number;
   userId: string;
+  // 主动发话 / 打断计时（缺省 DEFAULT_TIMING；测试传小值加速）
+  timing?: Partial<TurnTakingTiming>;
+  // 测试注入点（默认用真实实现；测试传 mock 以脱离网络/设备）
+  rtcFactory?: (cbs: RtcCallbacks, ice: RtcIceOptions) => RtcPeer;
+  asrFactory?: () => ParaformerRealtimeASR;
+  ttsFactory?: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
+  greetingClipsFactory?: (tts: GreetingTts) => GreetingClipCache;
 };
 
 export class CallSession {
@@ -187,12 +155,12 @@ export class CallSession {
   private readonly memoryBudget: number;
   private readonly historyBudget: number;
   private readonly userId: string;
+  private readonly timing: TurnTakingTiming;
 
   // —— 会话级状态（每通重置） ——
   private tracker = new ModeTracker();
   private coachTracker = new CoachTracker();
   private goalFollowUpDone = false;
-  private coachCheckinDone = false;
   private mood: MoodState | null = null;
   private lastAffect: Affect | null = null; // 最近一轮的 affect（含 incongruence，供 nudge 动态计时用）
   private persona: Persona = resolvePersona('程书衡')!;
@@ -206,42 +174,27 @@ export class CallSession {
   private asr: ParaformerRealtimeASR | null = null;
   private acoustic: AcousticFeatureExtractor | null = null;
   private sed: NlsSoundEventDetector | null = null;
-  private pendingVocals = new VocalEventAggregator();
-  private vocalTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastVocalRespondAt = 0;
   private readonly gate = new GenerationGate(); // 代际中止门：哪次生成还作数 + 对应 AbortSignal
-  private lastUserTurn: { text: string; vocals: VocalizationEvent[]; dominantVocal: DominantVocal } | null = null;
-  private reanswerTimer: ReturnType<typeof setTimeout> | null = null;
-  private reanswerCount = 0;
   private history: HistoryEntry[] = [];
   private recentSummaryText = '';
   private turnCount = 0;
   private loadedDetails: PersonaDetail[] = [];
   private readonly prefetchCache: PrefetchCache = createPrefetchCache();
 
-  private lastUserVoiceAt = Date.now();
-  private idleFired = false;
-  private lastTurnAskedQuestion = false;
   private lastQuestionText = '';
   private lastCuriosityHint = '';
-  private noReplyStreak = 0;
   private disinterestStreak = 0;
   private perfunctoryStreak = 0;
   private consecutiveQuestions = 0;
   private readonly userSaid: string[] = [];
   private prevTurnMemoryIds: string[] = [];
-  private agentDoneAt = 0;
-  private lastReplyLatencyMs = 0;
   private recentVoiceAt = 0;
   private agentAudible = false;
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private speaking = false;
   private userGender: '男' | '女' | null = null;
-  private lastWasFarewell = false;
-  private hangupTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingInterrupt = false;
-  private interruptGraceTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastBargeInAt = 0;
+
+  // 主动发话 / 打断 / 收尾状态机（从本类抽出；跨模块共享状态见其 public 字段）
+  private readonly turnTaking: TurnTakingController;
 
   private readonly backchannel = new BackchannelEngine(
     { silenceMs: 500, cooldownMs: 15000, maxPerTurn: 6, gain: 0.5, minSpeechMs: 30000 },
@@ -251,6 +204,12 @@ export class CallSession {
   private readonly tts: TtsEngine; // 构造器赋值（依赖 cfg 端点 + rtc 闭包）
 
   private readonly greetingClips: GreetingClipCache; // 构造器赋值（依赖 cfg）
+
+  // —— 测试注入点（默认实现；测试传 mock） ——
+  private readonly rtcFactory: (cbs: RtcCallbacks, ice: RtcIceOptions) => RtcPeer;
+  private readonly asrFactory: () => ParaformerRealtimeASR;
+  private readonly ttsFactory: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
+  private readonly greetingClipsFactory: (tts: GreetingTts) => GreetingClipCache;
 
   constructor(deps: SessionDeps) {
     this.cfg = deps.cfg;
@@ -270,21 +229,46 @@ export class CallSession {
     this.memoryBudget = deps.memoryBudget;
     this.historyBudget = deps.historyBudget;
     this.userId = deps.userId;
+    this.timing = { ...DEFAULT_TIMING, ...deps.timing };
+    // 测试注入点：默认用真实实现。
+    this.rtcFactory = deps.rtcFactory ?? createRtcPeer;
+    this.asrFactory = deps.asrFactory ?? (() => new ParaformerRealtimeASR());
+    this.ttsFactory = deps.ttsFactory ?? ((endpoints, pushPcm, onStart, sleep) => new TtsEngine(endpoints, pushPcm, onStart, sleep));
+    this.greetingClipsFactory = deps.greetingClipsFactory ?? ((tts) => new GreetingClipCache(tts));
     // safetyGuard 依赖 safetyLlm/cfg，字段初始化在构造器赋值之后再建。
     this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
     // TTS 合成引擎：把「整句合成 + 多端点重试」委托出去，只留 pushPcm 回调指向当前 RTC。
-    this.tts = new TtsEngine(
+    this.tts = this.ttsFactory(
       buildTtsEndpoints(this.cfg),
       (pcm) => this.rtc?.pushAgentPcm(pcm),
       () => { this.agentAudible = true; },
       (ms) => this.sleep(ms),
     );
     // 招呼语片段缓存：只管加载/落盘；播放与落库仍在本类。
-    this.greetingClips = new GreetingClipCache({
+    this.greetingClips = this.greetingClipsFactory({
       wsUrl: this.cfg.dashscopeWsUrl,
       apiKey: this.cfg.dashscopeApiKey,
       model: this.cfg.cosyvoiceModel,
     });
+    // 主动发话 / 打断状态机：借出窄回调，状态机不碰本类的 I/O 细节。
+    const self = this;
+    const host: TurnTakingHost = {
+      respond: (t, v, d) => self.respond(t, v, d),
+      speakProactive: (k) => self.speakProactive(k),
+      gate: self.gate,
+      get rtc() { return self.rtc; },
+      resetBackchannel: () => self.backchannel.reset(),
+      obs: self.obs,
+      get personaName() { return self.persona.name; },
+      coachIsActive: () => self.coachTracker.current === 'coach',
+      get mood() { return self.mood; },
+      get lastAffect() { return self.lastAffect; },
+      get speaking() { return self.speaking; },
+      set speaking(v) { self.speaking = v; },
+      get agentAudible() { return self.agentAudible; },
+      set agentAudible(v) { self.agentAudible = v; },
+    };
+    this.turnTaking = new TurnTakingController(host, this.timing);
   }
 
   get personaName(): string {
@@ -332,24 +316,19 @@ export class CallSession {
       );
     }
     this.sed?.close();
-    this.asr = new ParaformerRealtimeASR();
+    this.asr = this.asrFactory();
     this.acoustic = new AcousticFeatureExtractor();
-    this.pendingVocals = new VocalEventAggregator();
     this.history = [];
     this.tracker = new ModeTracker();
     this.coachTracker = new CoachTracker();
     this.goalFollowUpDone = false;
-    this.coachCheckinDone = false;
+    this.turnTaking.reset();
     this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
     this.mood = null;
     this.lastAffect = null;
     this.turnCount = 0;
     this.loadedDetails = [];
     this.prefetchCache.clear();
-    this.lastUserVoiceAt = Date.now();
-    this.idleFired = false;
-    this.clearPendingInterrupt();
-    this.lastTurnAskedQuestion = false;
     this.lastQuestionText = '';
     this.userSaid.length = 0;
     this.prevTurnMemoryIds = [];
@@ -361,12 +340,9 @@ export class CallSession {
         this.recentSummaryText = await compressSummaries(this.llm, this.cfg.generateModel, summaries).catch(() => summaries.join('\n'));
       })
       .catch(() => {});
-    this.noReplyStreak = 0;
     this.disinterestStreak = 0;
     this.perfunctoryStreak = 0;
     this.consecutiveQuestions = 0;
-    this.agentDoneAt = 0;
-    this.lastReplyLatencyMs = 0;
     this.speaking = false;
     this.userGender = null;
 
@@ -382,9 +358,9 @@ export class CallSession {
           akSecret: this.cfg.nlsAkSecret || undefined,
         },
         (ev) => {
-          this.pendingVocals.add(ev);
-          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.pendingVocals.dominant());
-          this.scheduleVocalRespond();
+          this.turnTaking.pendingVocals.add(ev);
+          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.turnTaking.pendingVocals.dominant());
+          this.turnTaking.scheduleVocalRespond();
         },
       );
     } else if (!this.cfg.nlsEnabled) {
@@ -400,7 +376,7 @@ export class CallSession {
     this.currentSessionId = await this.sessions.start(this.persona.name, this.userId).catch(() => null);
     this.obs.setSession(this.currentSessionId ? { sessionId: this.currentSessionId, userId: this.userId, personaName: this.persona.name } : null);
 
-    this.rtc = createRtcPeer(
+    this.rtc = this.rtcFactory(
       {
         onUserPcm: (chunk) => {
           // ASR 和 NLS 始终收——否则陪伴者说话时你抢话，麦克风被门挡住听不见。
@@ -411,17 +387,17 @@ export class CallSession {
           this.acoustic?.push(chunk);
           this.backchannel.feedPcm(chunk);
         },
-        onInterrupt: () => this.handleBargeIn('rtc'),
+        onInterrupt: () => this.turnTaking.handleBargeIn('rtc'),
         onPlaybackEnd: () => {
           this.speaking = false;
           this.agentAudible = false;
-          this.lastUserVoiceAt = Date.now();
-          this.agentDoneAt = Date.now();
-          if (this.lastWasFarewell) {
-            this.lastWasFarewell = false;
-            this.scheduleHangup();
+          this.turnTaking.lastUserVoiceAt = Date.now();
+          this.turnTaking.agentDoneAt = Date.now();
+          if (this.turnTaking.lastWasFarewell) {
+            this.turnTaking.lastWasFarewell = false;
+            this.turnTaking.scheduleHangup();
           }
-          this.armIdleCheck();
+          this.turnTaking.armIdleCheck();
         },
         onHangup: () => {
           console.log('[RTC] 收到挂断，立刻停');
@@ -457,7 +433,7 @@ export class CallSession {
 
     // 一联通就打招呼（异步、不阻塞响应）：优先缓存片段，预热失败回退 LLM 生成。
     const greetVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
-    this.idleFired = true;
+    this.turnTaking.idleFired = true;
     void (async () => {
       try {
         await this.greetingClips.ensure(greetVoice, this.persona.name, this.persona.voiceTint, this.persona.rate ?? 1.0, this.lang);
@@ -477,22 +453,11 @@ export class CallSession {
   private onAsrResult(text: string, isFinal: boolean): void {
     console.log('[ASR] 结果：', JSON.stringify({ text, isFinal }));
     const t = text.trim();
-    if (t && isFillerText(t) && (this.agentAudible || this.pendingInterrupt || Date.now() - this.lastBargeInAt < 1500)) {
-      if (isFinal) {
-        this.clearPendingInterrupt();
-        this.pendingVocals.reset();
-      } else if (this.pendingInterrupt) {
-        if (this.interruptGraceTimer !== null) clearTimeout(this.interruptGraceTimer);
-        this.interruptGraceTimer = setTimeout(() => {
-          this.interruptGraceTimer = null;
-          this.pendingInterrupt = false;
-          this.doBargeIn('rtc');
-        }, INTERRUPT_GRACE_MS);
-      }
+    if (t && isFillerText(t) && this.turnTaking.handleFillerText(isFinal)) {
       return;
     }
     if (this.agentAudible) {
-      if (t.length >= 2 || (isFinal && t)) this.handleBargeIn('asr');
+      if (t.length >= 2 || (isFinal && t)) this.turnTaking.handleBargeIn('asr');
       else return;
     }
     if (isFinal && Date.now() - this.recentVoiceAt > 3000) return; // 幻听门控
@@ -502,7 +467,7 @@ export class CallSession {
         this.gate.invalidate();
         this.speaking = false;
       }
-      this.markUserVoice();
+      this.turnTaking.markUserVoice();
     }
     if (isFinal) {
       if (t) {
@@ -513,19 +478,19 @@ export class CallSession {
           this.lang = detected;
           console.log(`[lang] 根据对方说话自动切到：${this.lang}`);
         }
-        const vocals = this.pendingVocals.list;
-        const dominantVocal = this.pendingVocals.dominant();
-        this.pendingVocals.reset();
-        this.clearVocalTimer();
+        const vocals = this.turnTaking.pendingVocals.list;
+        const dominantVocal = this.turnTaking.pendingVocals.dominant();
+        this.turnTaking.pendingVocals.reset();
+        this.turnTaking.clearVocalTimer();
         this.backchannel.onTurnEnd();
-        this.lastUserTurn = { text: cleanText, vocals, dominantVocal };
-        this.reanswerCount = 0;
-        this.clearReanswer();
+        this.turnTaking.lastUserTurn = { text: cleanText, vocals, dominantVocal };
+        this.turnTaking.reanswerCount = 0;
+        this.turnTaking.clearReanswer();
         this.rtc?.sendControl({ type: 'transcript', role: 'user', text: cleanText });
         this.respond(cleanText, vocals, dominantVocal).catch(console.error);
       }
     } else if (t) {
-      this.clearReanswer();
+      this.turnTaking.clearReanswer();
       this.backchannel.onInterim();
     }
   }
@@ -580,7 +545,7 @@ export class CallSession {
     if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
     this.lastAffect = plan.affect;
-    const disinterest = evaluateDisinterest(plan.affect.arousal, this.lastReplyLatencyMs, this.disinterestStreak);
+    const disinterest = evaluateDisinterest(plan.affect.arousal, this.turnTaking.lastReplyLatencyMs, this.disinterestStreak);
     this.disinterestStreak = disinterest.streak;
     const perfunctory = evaluatePerfunctory(userText, this.perfunctoryStreak);
     this.perfunctoryStreak = perfunctory.streak;
@@ -640,125 +605,33 @@ export class CallSession {
       searchEnabled,
     });
 
-    let awaitsResponse: boolean | null = null;
-    let firstTokenMs = 0;
-    const speakOne = async (seg: string, i: number, segEmotion: EmotionTag): Promise<string> => {
-      const { clean, awaits } = extractAwaits(seg);
-      if (awaits !== null) awaitsResponse = awaits;
-      if (!clean) return '';
-      const segProsody = EMOTION_PROSODY[segEmotion];
-      const segRate = Math.round((this.persona.rate ?? 1.0) * (segProsody.rate ?? 1.0) * 100) / 100;
-      if (i === 0) {
-        firstTokenMs = Date.now() - tStart;
-        console.log('[latency] 首句开始合成', firstTokenMs, 'ms（从用户说完）');
-        this.obs.score('first-token-ms', firstTokenMs);
-      }
-      console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
-      await this.obs.span('tts', () => this.tts.synthesize({
-        model: this.cfg.cosyvoiceModel,
-        voice: resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang),
-        instruction: buildInstruction(segEmotion, this.persona.voiceTint) + tailHint(clean),
-        text: clean,
-        rate: segRate,
-        pitch: segProsody.pitch,
-        signal,
-      }), { text: clean, emotion: segEmotion });
-      return clean;
-    };
-
-    // 逐句流水线：下一句的「LLM 续写 + 情绪分类」与当前句的 TTS 播放重叠跑，
-    // 消掉句与句之间的停顿/卡顿（否则每句都要先等分类、再等 LLM 续写出下一句，开头就顿一下）。
-    const speakSegments = async (segments: AsyncIterable<string> | string[]): Promise<string> => {
-      const it = asyncIterator(segments);
-      let full = '';
-      let i = 0;
-
-      const classify = async (seg: string): Promise<{ text: string; emotion: EmotionTag }> => ({
-        text: seg,
-        emotion: await classifySegmentEmotion(this.llm, this.cfg.generateModel, extractAwaits(seg).clean, plan.emotion),
-      });
-      const prefetch = async (): Promise<{ text: string; emotion: EmotionTag } | null> => {
-        const n = await it.next();
-        return n.done ? null : classify(n.value);
-      };
-
-      // 首句零延迟：直接用本轮基调，不跑分类。
-      const first = await it.next();
-      if (first.done) return '';
-      let cur: { text: string; emotion: EmotionTag } | null = { text: first.value, emotion: plan.emotion };
-      let nextP: Promise<{ text: string; emotion: EmotionTag } | null> = prefetch();
-
-      while (cur) {
-        if (!this.gate.isCurrent(myGen)) break;
-        full += await speakOne(cur.text, i, cur.emotion);
-        i++;
-        cur = await nextP;
-        if (cur) nextP = prefetch();
-      }
-      return full;
-    };
-
-    let fullText = '';
-    if (!searchEnabled) {
-      fullText = await speakSegments(streamMessages(this.llm, this.cfg.generateModel, messages));
-    } else {
-      let searchCall: ToolCall | null = null;
-      let spoken = '';
-      let i = 0;
-      for await (const ev of streamMessagesWithTools(this.llm, this.cfg.generateModel, messages, [SEARCH_TOOL])) {
-        if (!this.gate.isCurrent(myGen)) return;
-        if (ev.kind === 'sentence') {
-          const segEmotion = i === 0
-            ? plan.emotion
-            : await classifySegmentEmotion(this.llm, this.cfg.generateModel, extractAwaits(ev.text).clean, plan.emotion);
-          spoken += await speakOne(ev.text, i, segEmotion);
-          i++;
-        } else if (ev.kind === 'tool_calls') {
-          searchCall = ev.calls.find((c) => c.name === 'search_web') ?? null;
-        }
-      }
-      if (!this.gate.isCurrent(myGen)) return;
-      if (!searchCall || spoken.trim()) {
-        console.log('[search] 本轮未发起搜索（模型直接作答）');
-        fullText = spoken;
-      } else {
-        let query = '';
-        try { query = (JSON.parse(searchCall.arguments)?.query as string) ?? ''; } catch { query = ''; }
-        console.log('[search] 模型发起联网搜索：', query || '（空 query）');
-        for await (const pcm of streamTTS({
-          wsUrl: this.cfg.dashscopeWsUrl,
-          apiKey: this.cfg.dashscopeApiKey,
-          model: this.cfg.cosyvoiceModel,
-          voice: resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang),
-          instruction: buildInstruction('natural', this.persona.voiceTint),
-          text: pickFiller(),
-          rate: this.persona.rate ?? 1.0,
-          signal,
-        })) {
-          if (!this.gate.isCurrent(myGen)) break;
-          this.rtc?.pushAgentPcm(pcm);
-        }
-        const t0 = Date.now();
-        const results = query ? await bochaSearch(query, { apiKey: this.cfg.bochaApiKey, baseUrl: this.cfg.bochaBaseUrl }) : [];
-        await this.sleep(Math.max(0, MIN_SEARCH_MS - (Date.now() - t0)));
-        console.log('[search] 搜索返回', results.length, '条');
-        const assistantMsg: ChatMessage = {
-          role: 'assistant',
-          content: null,
-          tool_calls: [{ id: searchCall.id, type: 'function', function: { name: searchCall.name, arguments: searchCall.arguments } }],
-        };
-        const summary = results.map((r) => `${r.title}\n${r.snippet}`).join('\n\n') || '（没查到）';
-        const toolMsg: ChatMessage = {
-          role: 'tool',
-          tool_call_id: searchCall.id,
-          content: `搜索结果（用「哦，我查到了／原来是…」这类自然语气说出来，别生硬复述）：\n${summary}`,
-        };
-        fullText = await speakSegments(streamMessages(this.llm, this.cfg.generateModel, [...messages, assistantMsg, toolMsg]));
-      }
-    }
+    const voice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
+    const { fullText, awaitsResponse, firstTokenMs } = await streamTurnSpeech({
+      llm: this.llm,
+      generateModel: this.cfg.generateModel,
+      messages,
+      baseEmotion: plan.emotion,
+      voice,
+      voiceTint: this.persona.voiceTint,
+      rate: this.persona.rate ?? 1.0,
+      cosyvoiceModel: this.cfg.cosyvoiceModel,
+      dashscopeWsUrl: this.cfg.dashscopeWsUrl,
+      dashscopeApiKey: this.cfg.dashscopeApiKey,
+      bochaApiKey: this.cfg.bochaApiKey,
+      bochaBaseUrl: this.cfg.bochaBaseUrl,
+      searchEnabled,
+      gate: this.gate,
+      gen: myGen,
+      signal,
+      tts: this.tts,
+      pushAgentPcm: (pcm) => this.rtc?.pushAgentPcm(pcm),
+      sleep: (ms) => this.sleep(ms),
+      tStart,
+      obs: this.obs,
+    });
     if (this.gate.isCurrent(myGen)) {
-      this.lastUserTurn = null;
-      this.reanswerCount = 0;
+      this.turnTaking.lastUserTurn = null;
+      this.turnTaking.reanswerCount = 0;
       this.history.push({ kind: 'turn', role: 'user', text: userText });
       if (fullText.trim()) this.history.push({ kind: 'turn', role: 'agent', text: fullText.trim() });
       reachedEnd = true;
@@ -775,7 +648,7 @@ export class CallSession {
         affect: plan.affect,
         acoustic: acoustics,
         vocals: vocals.length ? vocals : undefined,
-        latencyMs: this.lastReplyLatencyMs || null,
+        latencyMs: this.turnTaking.lastReplyLatencyMs || null,
       }).catch((e) => console.warn('[transcript] 用户话落库失败：', e));
       if (replyText) {
         this.transcript.insert(this.persona.name, this.userId, {
@@ -798,14 +671,14 @@ export class CallSession {
           asked,
         }).catch((e) => console.warn('[transcript] 陪伴者话落库失败：', e));
       }
-      this.lastTurnAskedQuestion = asked;
+      this.turnTaking.lastTurnAskedQuestion = asked;
       if (asked) this.lastQuestionText = replyText; else this.lastQuestionText = '';
       if (asked && replyText) this.askedQuestions.record(this.persona.name, this.userId, replyText).catch(() => {});
       if (asked) this.consecutiveQuestions++; else this.consecutiveQuestions = 0;
       if (plan.farewell) {
-        this.lastTurnAskedQuestion = false;
-        this.lastWasFarewell = true;
-        this.idleFired = true;
+        this.turnTaking.lastTurnAskedQuestion = false;
+        this.turnTaking.lastWasFarewell = true;
+        this.turnTaking.idleFired = true;
       }
 
       consolidateAfterTurn({
@@ -835,14 +708,14 @@ export class CallSession {
       if (this.gate.isCurrent(myGen) && !reachedEnd) {
         this.speaking = false;
         this.agentAudible = false;
-        this.lastUserVoiceAt = Date.now();
-        this.armIdleCheck();
+        this.turnTaking.lastUserVoiceAt = Date.now();
+        this.turnTaking.armIdleCheck();
       }
     }
     });
   }
 
-  private async speakProactive(kind: 'greeting' | 'nudge' | 'followup' | 'checkin' | 'farewell' | 'coachClose') {
+  private async speakProactive(kind: ProactiveKind) {
     if (!this.rtc || this.speaking) return;
     const { gen: myGen, signal } = this.gate.begin();
     this.speaking = true;
@@ -883,9 +756,9 @@ export class CallSession {
         reachedEnd = true;
         this.rtc?.end();
         const asked = awaits !== null ? awaits : isAsking(seg);
-        this.lastTurnAskedQuestion = asked;
+        this.turnTaking.lastTurnAskedQuestion = asked;
         if (asked) this.lastQuestionText = seg; else this.lastQuestionText = '';
-        if (kind === 'farewell' || kind === 'coachClose') this.lastWasFarewell = true;
+        if (kind === 'farewell' || kind === 'coachClose') this.turnTaking.lastWasFarewell = true;
         this.transcript.insert(this.persona.name, this.userId, {
           sessionId: this.currentSessionId,
           role: 'agent',
@@ -902,166 +775,11 @@ export class CallSession {
       if (this.gate.isCurrent(myGen) && !reachedEnd) {
         this.speaking = false;
         this.agentAudible = false;
-        this.lastUserVoiceAt = Date.now();
-        this.armIdleCheck();
+        this.turnTaking.lastUserVoiceAt = Date.now();
+        this.turnTaking.armIdleCheck();
       }
     }
     });
-  }
-
-  private markUserVoice() {
-    const now = Date.now();
-    if (this.agentDoneAt > 0) {
-      this.lastReplyLatencyMs = now - this.agentDoneAt;
-      this.agentDoneAt = 0;
-    }
-    this.lastUserVoiceAt = now;
-    this.idleFired = false;
-    this.lastTurnAskedQuestion = false;
-    this.noReplyStreak = 0;
-    this.coachCheckinDone = false;
-    this.lastWasFarewell = false;
-    if (this.hangupTimer !== null) {
-      clearTimeout(this.hangupTimer);
-      this.hangupTimer = null;
-    }
-  }
-
-  private clearReanswer() {
-    if (this.reanswerTimer !== null) { clearTimeout(this.reanswerTimer); this.reanswerTimer = null; }
-  }
-
-  private armReanswer() {
-    this.clearReanswer();
-    const turn = this.lastUserTurn;
-    if (!turn || this.reanswerCount >= REANSWER_LIMIT) return;
-    this.reanswerTimer = setTimeout(() => {
-      this.reanswerTimer = null;
-      if (this.lastUserTurn === turn && !this.speaking && this.rtc) {
-        this.reanswerCount++;
-        console.log('[respond] 误打断后重答（第', this.reanswerCount, '次）：', turn.text);
-        void this.obs.trace('reanswer', { metadata: { attempt: this.reanswerCount, personaName: this.persona.name } }, async () => {});
-        this.respond(turn.text, turn.vocals, turn.dominantVocal).catch(console.error);
-      }
-    }, REANSWER_MS);
-  }
-
-  private armIdleCheck() {
-    if (this.idleTimer !== null) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-    if (!this.rtc || this.speaking) return;
-    if (this.coachTracker.current === 'coach') {
-      const target = this.coachCheckinDone ? COACH_CLOSE_MS : COACH_SILENT_MS;
-      const wait = Math.max(0, target - (Date.now() - this.lastUserVoiceAt));
-      this.idleTimer = setTimeout(() => {
-        this.idleTimer = null;
-        if (!this.rtc || this.speaking) return;
-        if (Date.now() - this.lastUserVoiceAt >= target) {
-          if (!this.coachCheckinDone) {
-            this.coachCheckinDone = true;
-            console.log('[proactive] 教练态沉默较久，轻轻确认一次');
-            this.speakProactive('checkin').catch(console.error);
-          } else {
-            console.log('[proactive] 教练态确认后仍无回应，温柔收尾');
-            this.speakProactive('coachClose').catch(console.error);
-          }
-        } else {
-          this.armIdleCheck();
-        }
-      }, wait);
-      return;
-    }
-    if (this.lastTurnAskedQuestion && this.noReplyStreak < NO_REPLY_LIMIT) {
-      const wait = Math.max(0, FOLLOWUP_MS - (Date.now() - this.lastUserVoiceAt));
-      this.idleTimer = setTimeout(() => {
-        this.idleTimer = null;
-        if (!this.rtc || this.speaking) return;
-        if (Date.now() - this.lastUserVoiceAt >= FOLLOWUP_MS) {
-          this.noReplyStreak++;
-          if (this.noReplyStreak >= NO_REPLY_LIMIT) {
-            this.idleFired = true;
-            console.log('[proactive] 触发 farewell（多次没回应）');
-            this.speakProactive('farewell').catch(console.error);
-          } else if (this.noReplyStreak === 2) {
-            console.log('[proactive] 触发 checkin（先问还在吗）');
-            this.speakProactive('checkin').catch(console.error);
-          } else {
-            console.log('[proactive] 触发 followup（追问自答）');
-            this.speakProactive('followup').catch(console.error);
-          }
-        } else {
-          this.armIdleCheck();
-        }
-      }, wait);
-      return;
-    }
-    if (this.idleFired) return;
-    const nudgeMs = nudgeDelayMs(this.mood, this.lastAffect?.incongruence ?? false);
-    const wait = Math.max(0, nudgeMs - (Date.now() - this.lastUserVoiceAt));
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = null;
-      if (!this.rtc || this.speaking || this.idleFired) return;
-      if (Date.now() - this.lastUserVoiceAt >= nudgeMs) {
-        this.idleFired = true;
-        console.log(`[proactive] 触发 nudge（静默 ${Math.round((Date.now() - this.lastUserVoiceAt) / 1000)}s，情绪延迟 ${nudgeMs}ms）`);
-        this.speakProactive('nudge').catch(console.error);
-      } else {
-        this.armIdleCheck();
-      }
-    }, wait);
-  }
-
-  private clearPendingInterrupt() {
-    this.pendingInterrupt = false;
-    if (this.interruptGraceTimer !== null) {
-      clearTimeout(this.interruptGraceTimer);
-      this.interruptGraceTimer = null;
-    }
-  }
-
-  private doBargeIn(source: 'rtc' | 'asr') {
-    console.log(`[RTC] 打断（interrupt，via ${source}）`);
-    void this.obs.trace('interrupt', { metadata: { personaName: this.persona.name, source } }, async () => {});
-    this.lastBargeInAt = Date.now();
-    this.gate.invalidate();
-    this.rtc?.clear();
-    this.backchannel.reset();
-    this.speaking = false;
-    this.agentAudible = false;
-    this.agentDoneAt = 0;
-    this.markUserVoice();
-    this.armReanswer();
-    this.armIdleCheck();
-  }
-
-  private handleBargeIn(source: 'rtc' | 'asr') {
-    if (!this.agentAudible) return;
-    if (source === 'rtc') {
-      if (this.pendingInterrupt) return;
-      this.pendingInterrupt = true;
-      if (this.interruptGraceTimer !== null) clearTimeout(this.interruptGraceTimer);
-      this.interruptGraceTimer = setTimeout(() => {
-        this.interruptGraceTimer = null;
-        this.pendingInterrupt = false;
-        this.doBargeIn('rtc');
-      }, INTERRUPT_GRACE_MS);
-      return;
-    }
-    this.clearPendingInterrupt();
-    this.doBargeIn('asr');
-  }
-
-  private scheduleHangup() {
-    if (this.hangupTimer !== null) clearTimeout(this.hangupTimer);
-    console.log('[proactive] 说完"不打扰"，10s 后挂断');
-    this.hangupTimer = setTimeout(() => {
-      this.hangupTimer = null;
-      console.log('[proactive] 挂断');
-      this.rtc?.sendControl({ type: 'hangup' });
-      setTimeout(() => this.rtc?.close(), 500);
-    }, 10000);
   }
 
   private teardownCall(reason: 'hangup' | 'close') {
@@ -1077,54 +795,13 @@ export class CallSession {
     this.rtc = null;
     this.sed?.close();
     this.speaking = false;
-    this.clearReanswer();
-    this.lastUserTurn = null;
-    this.reanswerCount = 0;
-    if (this.idleTimer !== null) { clearTimeout(this.idleTimer); this.idleTimer = null; }
-    if (this.vocalTimer !== null) { clearTimeout(this.vocalTimer); this.vocalTimer = null; }
-    if (this.hangupTimer !== null) { clearTimeout(this.hangupTimer); this.hangupTimer = null; }
-    this.clearPendingInterrupt();
+    this.turnTaking.teardown();
     if (this.currentSessionId) {
       const id = this.currentSessionId;
       this.currentSessionId = null;
       void this.obs.trace('hangup', { metadata: { reason, personaName: this.persona.name } }, async () => {});
       this.obs.setSession(null);
       this.sessions.end(id).catch(() => {});
-    }
-  }
-
-  private scheduleVocalRespond() {
-    if (this.vocalTimer !== null) clearTimeout(this.vocalTimer);
-    const now = Date.now();
-    const sinceLast = now - this.lastVocalRespondAt;
-    let wait: number;
-    if (sinceLast < VOCAL_COOLDOWN_MS) {
-      wait = VOCAL_COOLDOWN_MS - sinceLast;
-    } else {
-      wait = VOCAL_DEBOUNCE_MS;
-      if (this.pendingVocals.hasAny) {
-        wait = Math.min(wait, Math.max(0, VOCAL_MAX_HOLD_MS - (now - this.pendingVocals.firstAtMs)));
-      }
-    }
-    this.vocalTimer = setTimeout(() => {
-      this.vocalTimer = null;
-      this.triggerVocalRespond();
-    }, wait);
-  }
-
-  private triggerVocalRespond() {
-    if (!this.pendingVocals.hasAny) return;
-    this.lastVocalRespondAt = Date.now();
-    const vocals = this.pendingVocals.list;
-    const dominantVocal = this.pendingVocals.dominant();
-    this.pendingVocals.reset();
-    this.respond('', vocals, dominantVocal).catch(console.error);
-  }
-
-  private clearVocalTimer() {
-    if (this.vocalTimer !== null) {
-      clearTimeout(this.vocalTimer);
-      this.vocalTimer = null;
     }
   }
 
@@ -1154,7 +831,7 @@ export class CallSession {
     console.log('[greeting] 播放缓存招呼语');
     this.speaking = true;
     this.agentAudible = true;
-    this.lastTurnAskedQuestion = false;
+    this.turnTaking.lastTurnAskedQuestion = false;
     this.rtc.pushAgentPcm(pick.clip);
     this.rtc.end();
     if (pick.phrase) {

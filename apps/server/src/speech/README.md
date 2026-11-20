@@ -11,6 +11,7 @@
 
 其余文件按职责命名，语义自明：
 
+- `speakPipeline.ts` —— `streamTurnSpeech`：把「决策好的 messages」流式生成 → 切句 → 逐句 TTS，含联网搜索分支。从 `session.ts` 抽出，`respond()` 只调它。
 - `ttsEngine.ts` —— TtsEngine：整句合成 + 多端点重试，包 `cosyvoiceRealtime.streamTTS`。
 - `emotionInstruction.ts` —— 情绪 → CosyVoice `instruction`（通用镜像层 + 人设底色 + 句尾处理）。
 - `acousticFeatures.ts` —— 副语言特征（响度/音高/语速/停顿的会话内 z-score），喂 call1 打分。
