@@ -42,6 +42,11 @@ export default function Page() {
   const [notice, setNotice] = useState<string | null>(null);
   const [safety, setSafety] = useState<{ level: number; resources: { name: string; number: string; note?: string }[] } | null>(null);
 
+  const [contactsLoading, setContactsLoading] = useState(true);
+  // 笔记本侧栏的行内编辑 / 删除二次确认（Electron 不支持 prompt/confirm）
+  const [editingMem, setEditingMem] = useState<{ id: string; text: string } | null>(null);
+  const [deletingMem, setDeletingMem] = useState<string | null>(null);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -74,9 +79,11 @@ export default function Page() {
         const m: Record<string, boolean> = {};
         (d.names ?? []).forEach((n) => (m[n] = true));
         setAdded(m);
+        setContactsLoading(false);
       } catch {
         if (cancelled) return;
         if (attempt < 20) timer = setTimeout(() => load(attempt + 1), 500);
+        else setContactsLoading(false); // 重试耗尽，结束 loading
       }
     };
     load(0);
@@ -322,23 +329,23 @@ export default function Page() {
     } catch (e) { console.error('添加/移除伙伴失败：', e); }
   }
 
-  async function editMemory(m: Mem) {
-    const text = prompt('修改这条记忆：', m.content);
-    if (text == null || !text.trim()) return;
+  async function saveEditMem() {
+    if (!editingMem || !editingMem.text.trim()) { setEditingMem(null); return; }
     try {
-      await fetch(`${getServer()}/memories/${m.id}`, {
+      await fetch(`${getServer()}/memories/${editingMem.id}?character=${encodeURIComponent(selected ?? '')}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text.trim() }),
+        body: JSON.stringify({ content: editingMem.text.trim() }),
       });
+      setEditingMem(null);
       loadMemories(inCall ? callStartAt : null);
     } catch (e) { console.error('编辑记忆失败：', e); }
   }
 
-  async function deleteMemory(m: Mem) {
-    if (!confirm('删除这条记忆？（会从 AI 记忆里移除）')) return;
+  async function doDeleteMem(m: Mem) {
     try {
-      await fetch(`${getServer()}/memories/${m.id}`, { method: 'DELETE' });
+      await fetch(`${getServer()}/memories/${m.id}?character=${encodeURIComponent(selected ?? '')}`, { method: 'DELETE' });
+      setDeletingMem(null);
       loadMemories(inCall ? callStartAt : null);
     } catch (e) { console.error('删除记忆失败：', e); }
   }
@@ -367,7 +374,9 @@ export default function Page() {
           </div>
           <div className="search"><span>🔍</span><input placeholder="搜索伙伴" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
           <div className="list">
-            {addedList.length === 0 ? (
+            {contactsLoading ? (
+              <div className="empty">加载中…</div>
+            ) : addedList.length === 0 ? (
               <div className="empty">还没有伙伴<br />点右上角 ＋ 添加</div>
             ) : filtered.length === 0 ? (
               <div className="empty">没有找到匹配的伙伴</div>
@@ -448,16 +457,36 @@ export default function Page() {
             {!selectedCompanion ? (
               <div className="empty">选一位伙伴后<br />这里显示 TA 关于你的记忆</div>
             ) : memories.length === 0 ? (
-              <div className="empty">{inCall ? '还没产生新记忆<br />聊几句就有了' : '暂无本次对话的记忆'}</div>
+              <div className="empty">{inCall ? <>还没产生新记忆<br />聊几句就有了</> : '暂无本次对话的记忆'}</div>
             ) : (
               memories.map((m) => (
                 <div className="m" key={m.id}>
                   <div className="mh">
                     <span className={`chip ${chipClass(m.kind)}`}>{KIND_LABEL[m.kind] ?? m.kind}</span>
-                    <button className="del" onClick={() => deleteMemory(m)} title="删除">✕</button>
+                    <button className="del" onClick={() => { setEditingMem(null); setDeletingMem(m.id); }} title="删除">✕</button>
                   </div>
-                  <div className="mb">{m.content}</div>
-                  <button className="edit" onClick={() => editMemory(m)}>编辑</button>
+                  {editingMem?.id === m.id ? (
+                    <>
+                      <textarea className="mem-edit-input" value={editingMem.text} autoFocus rows={3} onChange={(e) => setEditingMem({ id: m.id, text: e.target.value })} />
+                      <div>
+                        <button className="edit" onClick={saveEditMem}>保存</button>
+                        <button className="edit" onClick={() => setEditingMem(null)}>取消</button>
+                      </div>
+                    </>
+                  ) : deletingMem === m.id ? (
+                    <>
+                      <div className="mb">{m.content}</div>
+                      <div>
+                        <button className="edit" onClick={() => doDeleteMem(m)}>确认删除</button>
+                        <button className="edit" onClick={() => setDeletingMem(null)}>取消</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mb">{m.content}</div>
+                      <button className="edit" onClick={() => { setDeletingMem(null); setEditingMem({ id: m.id, text: m.content }); }}>编辑</button>
+                    </>
+                  )}
                 </div>
               ))
             )}
