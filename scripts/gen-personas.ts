@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseDetail, type PersonaDetail } from '../apps/server/src/persona/detail';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CHARACTER_DIR = join(ROOT, 'character');
@@ -89,6 +90,21 @@ function composeSystemPrompt(p: RawPersona): string {
   return parts.join('\n\n');
 }
 
+// 人物详情（认知/经历/偏好）：一条一个文件，frontmatter description 是相关性判据。可缺省（无详情返回 []）。
+function loadDetails(name: string): PersonaDetail[] {
+  const dir = join(CHARACTER_DIR, name);
+  const details: PersonaDetail[] = [];
+  for (const type of ['认知', '经历', '偏好']) {
+    const sub = join(dir, type);
+    if (!existsSync(sub)) continue;
+    for (const f of readdirSync(sub).sort()) {
+      if (!f.endsWith('.md')) continue;
+      details.push(parseDetail(read(join(sub, f)), type));
+    }
+  }
+  return details;
+}
+
 function main() {
   const names = readdirSync(CHARACTER_DIR).filter((f) => existsSync(join(CHARACTER_DIR, f, '角色卡.md')));
   if (names.length === 0) throw new Error('character/ 下没有可解析的角色卡');
@@ -99,6 +115,7 @@ function main() {
   const serverLines: string[] = [];
   serverLines.push('// 由 scripts/gen-personas.ts 生成，勿手改。唯一事实源：character/<姓名>/。');
   serverLines.push("import type { Persona } from '@mirror/contracts';");
+  serverLines.push("import type { PersonaDetail } from './detail';");
   serverLines.push('');
   serverLines.push('export const PERSONAS: Record<string, Persona> = {');
   for (const p of personas.filter((p) => p.available)) {
@@ -112,6 +129,23 @@ function main() {
     serverLines.push(`    rate: ${p.rate},`);
     serverLines.push(`    systemPrompt: ${JSON.stringify(composeSystemPrompt(p))},`);
     serverLines.push('  },');
+  }
+  serverLines.push('};');
+  serverLines.push('');
+
+  // —— server：PERSONA_DETAILS（认知/经历/偏好，渐进式加载）——
+  serverLines.push('// 人物详情（认知/经历/偏好）。无详情的人物省略键；loadPersonaDetails 用 ?? [] 兜底。');
+  serverLines.push('export const PERSONA_DETAILS: Record<string, PersonaDetail[]> = {');
+  for (const p of personas.filter((p) => p.available)) {
+    const details = loadDetails(p.name);
+    if (details.length === 0) continue;
+    serverLines.push(`  ${JSON.stringify(p.name)}: [`);
+    for (const d of details) {
+      serverLines.push(
+        `    { name: ${JSON.stringify(d.name)}, description: ${JSON.stringify(d.description)}, type: ${JSON.stringify(d.type)}, content: ${JSON.stringify(d.content)} },`,
+      );
+    }
+    serverLines.push('  ],');
   }
   serverLines.push('};');
   serverLines.push('');

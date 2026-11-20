@@ -1,48 +1,19 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Embedder } from '../llm/embedding';
+import { PERSONA_DETAILS } from './generated';
+import { parseDetail, type PersonaDetail } from './detail';
 
 // 人物详情「渐进式加载」——像 Claude Code 的记忆：详情一条一个文件（认知/经历/偏好，
 // frontmatter 的 description = 相关性判据），命中才加载详情。
-// 常驻底座（角色卡正文 + 记忆索引）已由 scripts/gen-personas.ts 在构建期烤进 PERSONAS 的 systemPrompt，这里只管按需详情。
+// 常驻底座（角色卡正文 + 记忆索引）已由 scripts/gen-personas.ts 在构建期烤进 PERSONAS 的 systemPrompt；
+// 详情同样在构建期烤进 PERSONA_DETAILS（唯一事实源 character/），运行时不再读文件系统——
+// 桌面版打包后没有 character/ 目录也能跑，不再依赖 process.cwd()。
 
-export type PersonaDetail = {
-  name: string;
-  description: string; // 触发钩子：什么时候该想起来（用于相关性判据，像 Claude Code 记忆的 description）
-  type: string;        // 认知 | 经历 | 偏好
-  content: string;
-};
+export { parseDetail };
+export type { PersonaDetail };
 
-const CHARACTER_DIR = join(process.cwd(), 'character'); // npm start 从仓库根跑，cwd=仓库根
-
-const read = (p: string): string => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
-
-// 读 character/<name>/ 的 认知/经历/偏好 详情；不存在返回 []。
+// 取某人物烤好的详情；不存在返回 []。
 export function loadPersonaDetails(name: string): PersonaDetail[] {
-  const dir = join(CHARACTER_DIR, name);
-  if (!existsSync(dir)) return [];
-
-  const details: PersonaDetail[] = [];
-  for (const type of ['认知', '经历', '偏好']) {
-    const sub = join(dir, type);
-    if (!existsSync(sub)) continue;
-    for (const f of readdirSync(sub).sort()) {
-      if (!f.endsWith('.md')) continue;
-      details.push(parseDetail(read(join(sub, f)), type));
-    }
-  }
-  return details;
-}
-
-// 解析 frontmatter（name / description / type）+ 正文。可单测。
-export function parseDetail(raw: string, type: string): PersonaDetail {
-  const normalized = raw.replace(/\r\n/g, '\n');
-  const m = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!m) return { name: '', description: '', type, content: normalized.trim() };
-  const fm = m[1];
-  const name = (fm.match(/^name:\s*(.+)$/m)?.[1] ?? '').trim();
-  const description = (fm.match(/^description:\s*(.+)$/m)?.[1] ?? '').trim();
-  return { name, description, type, content: m[2].trim() };
+  return PERSONA_DETAILS[name] ?? [];
 }
 
 // 余弦相似度。可单测。
