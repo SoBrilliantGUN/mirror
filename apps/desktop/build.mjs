@@ -2,12 +2,15 @@
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, copyFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..', '..');
 const dist = join(__dirname, 'dist');
 mkdirSync(dist, { recursive: true });
+
+// 应用图标拷到 dist/，供 BrowserWindow 的窗口/任务栏图标用（dev 与打包后都从 dist/ 取）。
+copyFileSync(join(__dirname, 'build', 'icon.png'), join(dist, 'icon.png'));
 
 // 1) server 子进程入口（bundles server 源码；node_modules 全外部化，运行时从 node_modules 解析）。
 await build({

@@ -92,6 +92,7 @@ function createWindow(): Promise<void> {
       minHeight: 620,
       title: 'mirror · 生活教练陪伴',
       backgroundColor: '#0f1020',
+      icon: join(__dirname, 'icon.png'), // 任务栏/窗口图标（build.mjs 已拷到 dist/）
       webPreferences: {
         preload: join(__dirname, 'preload.cjs'),
         contextIsolation: true,

@@ -1,7 +1,9 @@
 // 单通通话的编排（CallSession）：串 ASR → L3 大脑 → TTS → WebRTC，含主动发话状态机、抢话判定期、
 // 招呼语缓存、后台记忆/课题/人设增补。生命周期 = 一通电话（每 /rtc/offer 重置状态）。
 import type {
+  Affect,
   DependenceSignals,
+  EmotionTag,
   GrowthGoalStore,
   MemoryStore,
   MoodState,
@@ -50,7 +52,7 @@ import { compressHistory } from './brain/compress';
 import { summarizeCall, compressSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
 import { buildCuriosityHint } from './brain/ontology';
-import { buildGoalFollowUpHint } from './brain/context';
+import { buildGoalFollowUpHint, formatHistory } from './brain/context';
 import { neutralAcoustic } from './stubs';
 import { SafetyGuard } from './brain/safety';
 import { CRISIS_RESOURCES } from './brain/crisisResources';
@@ -83,9 +85,43 @@ function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'imme
 // 是否在向用户提问（回退正则：优先用生成阶段顺带输出的 awaits 标签，漏打时用「句子里出现过问号」判断）。
 const isAsking = (text: string) => /[？?]/.test(text);
 
+// string[] / AsyncIterable 统一成 AsyncIterator，供逐句流水线预取下一句用。
+function asyncIterator<T>(segments: AsyncIterable<T> | T[]): AsyncIterator<T> {
+  if (Symbol.asyncIterator in (segments as AsyncIterable<T>)) {
+    return (segments as AsyncIterable<T>)[Symbol.asyncIterator]();
+  }
+  const arr = segments as T[];
+  let idx = 0;
+  return {
+    async next(): Promise<IteratorResult<T>> {
+      return idx < arr.length ? { value: arr[idx++], done: false } : { value: undefined as T, done: true };
+    },
+  };
+}
+
+// 从对方一句话判语言：含中文 → zh；纯英文 → en；无语义字符（嗯/哦/数字/标点）→ null（不切换，保持现状）。
+// 说话自动切换语言用，替代原来的中英文开关。
+function detectLang(text: string): 'zh' | 'en' | null {
+  if (/[一-鿿]/.test(text)) return 'zh';
+  if (/[A-Za-z]/.test(text)) return 'en';
+  return null;
+}
+
 // 主动发话计时（全部程序计时，不靠 LLM 自觉）。
-const NUDGE_MS = 2000;
 const FOLLOWUP_MS = 5000;
+
+// 非问句结尾后的「轻问找话题」等待时长：根据对方当前情绪动态决定，不写死一个数。
+// 越沉（效价越负 / 唤醒越高 / 越无力 / 逞强）越要给人空间、等得越久；轻松时短一点。
+function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): number {
+  const m = mood ?? { valence: 0, arousal: 0, dominance: 0 };
+  let ms = 10000 // 中性基线 10s
+    - Math.max(0, m.valence) * 2000       // 轻松（效价正）→ 早点接话
+    + Math.max(0, -m.valence) * 2500      // 低落（效价负）→ 多给空间
+    + Math.max(0, m.arousal) * 1500       // 激动 / 崩溃 → 别催
+    + Math.max(0, -m.dominance) * 1500;   // 无力 / 被压着 → 多给空间
+  if (incongruence) ms += 4000;           // 逞强（嘴上平静心里慌）→ 尤其别急着打断
+  return Math.round(Math.min(Math.max(ms, 5000), 24000)); // 夹在 5s ~ 24s
+}
 const NO_REPLY_LIMIT = 3; // 1 次没答→自问自答，2 次→问"还在吗"，3 次→情绪化收尾
 const COACH_SILENT_MS = 30000;
 const COACH_CLOSE_MS = 30000;
@@ -147,6 +183,7 @@ export class CallSession {
   private goalFollowUpDone = false;
   private coachCheckinDone = false;
   private mood: MoodState | null = null;
+  private lastAffect: Affect | null = null; // 最近一轮的 affect（含 incongruence，供 nudge 动态计时用）
   private persona: Persona = resolvePersona('程书衡')!;
   private lang: 'zh' | 'en' = 'zh';
   private englishMode: 'immersion' | 'coach' = 'immersion';
@@ -282,6 +319,7 @@ export class CallSession {
     this.coachCheckinDone = false;
     this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
     this.mood = null;
+    this.lastAffect = null;
     this.turnCount = 0;
     this.loadedDetails = [];
     this.prefetchCache.clear();
@@ -378,7 +416,7 @@ export class CallSession {
         wsUrl: this.cfg.dashscopeWsUrl,
         apiKey: this.cfg.dashscopeApiKey,
         model: this.cfg.paraformerModel,
-        languageHints: this.lang === 'en' ? ['en'] : ['zh'],
+        languageHints: ['zh', 'en'],
         onResult: (text, isFinal) => this.onAsrResult(text, isFinal),
       });
     } catch (e) {
@@ -447,6 +485,12 @@ export class CallSession {
     if (isFinal) {
       if (t) {
         const cleanText = normalizePersonaName(t, this.persona.name);
+        // 说话自动切语言：含中文回 zh、纯英文切 en，无语义字符（嗯/哦）保持不变。
+        const detected = detectLang(cleanText);
+        if (detected && detected !== this.lang) {
+          this.lang = detected;
+          console.log(`[lang] 根据对方说话自动切到：${this.lang}`);
+        }
         const vocals = this.pendingVocals.list;
         const dominantVocal = this.pendingVocals.dominant();
         this.pendingVocals.reset();
@@ -515,6 +559,7 @@ export class CallSession {
     ]);
     if (myGen !== this.currentGeneration) return;
     this.mood = plan.mood;
+    this.lastAffect = plan.affect;
     const disinterest = evaluateDisinterest(plan.affect.arousal, this.lastReplyLatencyMs, this.disinterestStreak);
     this.disinterestStreak = disinterest.streak;
     const perfunctory = evaluatePerfunctory(userText, this.perfunctoryStreak);
@@ -577,13 +622,10 @@ export class CallSession {
 
     let awaitsResponse: boolean | null = null;
     let firstTokenMs = 0;
-    const speakOne = async (seg: string, i: number): Promise<string> => {
+    const speakOne = async (seg: string, i: number, segEmotion: EmotionTag): Promise<string> => {
       const { clean, awaits } = extractAwaits(seg);
       if (awaits !== null) awaitsResponse = awaits;
       if (!clean) return '';
-      const segEmotion = i === 0
-        ? plan.emotion
-        : await classifySegmentEmotion(this.llm, this.cfg.generateModel, clean, plan.emotion);
       const segProsody = EMOTION_PROSODY[segEmotion];
       const segRate = Math.round((this.persona.rate ?? 1.0) * (segProsody.rate ?? 1.0) * 100) / 100;
       if (i === 0) {
@@ -604,13 +646,34 @@ export class CallSession {
       return clean;
     };
 
+    // 逐句流水线：下一句的「LLM 续写 + 情绪分类」与当前句的 TTS 播放重叠跑，
+    // 消掉句与句之间的停顿/卡顿（否则每句都要先等分类、再等 LLM 续写出下一句，开头就顿一下）。
     const speakSegments = async (segments: AsyncIterable<string> | string[]): Promise<string> => {
+      const it = asyncIterator(segments);
       let full = '';
       let i = 0;
-      for await (const seg of segments) {
+
+      const classify = async (seg: string): Promise<{ text: string; emotion: EmotionTag }> => ({
+        text: seg,
+        emotion: await classifySegmentEmotion(this.llm, this.cfg.generateModel, extractAwaits(seg).clean, plan.emotion),
+      });
+      const prefetch = async (): Promise<{ text: string; emotion: EmotionTag } | null> => {
+        const n = await it.next();
+        return n.done ? null : classify(n.value);
+      };
+
+      // 首句零延迟：直接用本轮基调，不跑分类。
+      const first = await it.next();
+      if (first.done) return '';
+      let cur: { text: string; emotion: EmotionTag } | null = { text: first.value, emotion: plan.emotion };
+      let nextP: Promise<{ text: string; emotion: EmotionTag } | null> = prefetch();
+
+      while (cur) {
         if (myGen !== this.currentGeneration) break;
-        full += await speakOne(seg, i);
+        full += await speakOne(cur.text, i, cur.emotion);
         i++;
+        cur = await nextP;
+        if (cur) nextP = prefetch();
       }
       return full;
     };
@@ -625,7 +688,10 @@ export class CallSession {
       for await (const ev of streamMessagesWithTools(this.llm, this.cfg.generateModel, messages, [SEARCH_TOOL])) {
         if (myGen !== this.currentGeneration) return;
         if (ev.kind === 'sentence') {
-          spoken += await speakOne(ev.text, i);
+          const segEmotion = i === 0
+            ? plan.emotion
+            : await classifySegmentEmotion(this.llm, this.cfg.generateModel, extractAwaits(ev.text).clean, plan.emotion);
+          spoken += await speakOne(ev.text, i, segEmotion);
           i++;
         } else if (ev.kind === 'tool_calls') {
           searchCall = ev.calls.find((c) => c.name === 'search_web') ?? null;
@@ -798,7 +864,16 @@ export class CallSession {
       input: { kind },
     }, async () => {
     try {
-      const system = buildProactiveSystemPrompt(kind, buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode), this.lastQuestionText, kind === 'nudge' && this.coachTracker.current === 'friend' ? this.lastCuriosityHint || undefined : undefined);
+      const system = buildProactiveSystemPrompt(
+        kind,
+        buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode),
+        {
+          lastQuestion: this.lastQuestionText,
+          curiosityHint: kind === 'nudge' && this.coachTracker.current === 'friend' ? this.lastCuriosityHint || undefined : undefined,
+          recentTurns: formatHistory(this.history.slice(-6)),
+          mood: this.mood,
+        },
+      );
       const text = await generateProactiveText(this.llm, this.cfg.generateModel, system);
       if (myGen !== this.currentGeneration) return;
       const { clean: seg, awaits } = extractAwaits(text.trim());
@@ -934,13 +1009,14 @@ export class CallSession {
       return;
     }
     if (this.idleFired) return;
-    const wait = Math.max(0, NUDGE_MS - (Date.now() - this.lastUserVoiceAt));
+    const nudgeMs = nudgeDelayMs(this.mood, this.lastAffect?.incongruence ?? false);
+    const wait = Math.max(0, nudgeMs - (Date.now() - this.lastUserVoiceAt));
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (!this.rtc || this.speaking || this.idleFired) return;
-      if (Date.now() - this.lastUserVoiceAt >= NUDGE_MS) {
+      if (Date.now() - this.lastUserVoiceAt >= nudgeMs) {
         this.idleFired = true;
-        console.log('[proactive] 触发 nudge（2s 静默）');
+        console.log(`[proactive] 触发 nudge（静默 ${Math.round((Date.now() - this.lastUserVoiceAt) / 1000)}s，情绪延迟 ${nudgeMs}ms）`);
         this.speakProactive('nudge').catch(console.error);
       } else {
         this.armIdleCheck();
@@ -1082,11 +1158,14 @@ export class CallSession {
       while (true) {
         try {
           this.agentAudible = true;
+          const acc: Uint8Array[] = [];
           for await (const pcm of streamTTS({ ...params, wsUrl: ep.url, apiKey: ep.key })) {
             if (params.signal?.aborted) break;
-            this.rtc?.pushAgentPcm(pcm);
+            acc.push(pcm);
           }
           if (params.signal?.aborted) return;
+          // 整句攒完一次性推进队列：先缓冲完整句再播，逐句顺序放，避免「来一段放一段」的流式卡顿
+          for (const pcm of acc) this.rtc?.pushAgentPcm(pcm);
           return;
         } catch (e) {
           if (params.signal?.aborted) return;

@@ -32,8 +32,6 @@ export default function Page() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
   const [keysMissing, setKeysMissing] = useState(false);
-  const [lang, setLang] = useState<'zh' | 'en'>('zh');
-  const [englishMode, setEnglishMode] = useState<'immersion' | 'coach'>('immersion');
 
   const [inCall, setInCall] = useState(false);
   const [status, setStatus] = useState('');
@@ -60,23 +58,7 @@ export default function Page() {
   // 桌面版（Electron）才显示设置入口
   useEffect(() => {
     setIsElectron(typeof window !== 'undefined' && !!window.mirrorSettings);
-    // 语言开关持久化（localStorage），跨重启保持
-    try {
-      setLang(localStorage.getItem('mirror.lang') === 'en' ? 'en' : 'zh');
-      setEnglishMode(localStorage.getItem('mirror.englishMode') === 'coach' ? 'coach' : 'immersion');
-    } catch { /* ignore */ }
   }, []);
-
-  function toggleLang() {
-    const next = lang === 'zh' ? 'en' : 'zh';
-    setLang(next);
-    try { localStorage.setItem('mirror.lang', next); } catch { /* ignore */ }
-  }
-  function toggleEnglishMode() {
-    const next = englishMode === 'immersion' ? 'coach' : 'immersion';
-    setEnglishMode(next);
-    try { localStorage.setItem('mirror.englishMode', next); } catch { /* ignore */ }
-  }
 
   // 启动时拉已添加的伙伴。服务端冷启动（内嵌 PG + 建表 + 播种默认伙伴）可能比前端晚就绪，
   // 单次 fetch 失败就再也不重试会把「默认添加苏明悦」吞掉——这里退避重试直到拉到。
@@ -216,7 +198,7 @@ export default function Page() {
         const res = await fetch(`${getServer()}/rtc/offer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sdp: pc.localDescription?.sdp ?? offer.sdp, name: c.name, lang, englishMode }),
+          body: JSON.stringify({ sdp: pc.localDescription?.sdp ?? offer.sdp, name: c.name }),
         });
         if (!res.ok) {
           let msg = '信令 HTTP ' + res.status;
@@ -370,14 +352,6 @@ export default function Page() {
       <div className="blob b1" /><div className="blob b2" /><div className="blob b3" />
       <div className="topbar">
         <div className="tb-right">
-          <button className="lang-btn" onClick={toggleLang} title="切换聊天语言">
-            {lang === 'zh' ? '中文' : 'EN'}
-          </button>
-          {lang === 'en' && (
-            <button className="lang-btn" onClick={toggleEnglishMode} title="英文模式：沉浸式 / 纠错教学">
-              {englishMode === 'immersion' ? '沉浸式' : '纠错教学'}
-            </button>
-          )}
           {isElectron && (
             <button className="settings-btn" onClick={() => setSettingsOpen(true)}>⚙ 设置</button>
           )}

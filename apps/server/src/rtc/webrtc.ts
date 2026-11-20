@@ -1,6 +1,6 @@
 import { RTCPeerConnection, MediaStreamTrack, useOPUS, RtpBuilder } from 'werift';
 import OpusScript from 'opusscript';
-import { resample } from './resample';
+import { resample, createStreamResampler } from './resample';
 
 // 等 ICE 采集完成（非 trickle，把 host candidate 写进 SDP 再交换）。
 function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
@@ -40,6 +40,8 @@ export type RtcPeer = {
 
 const FRAME_SAMPLES = 960; // 20ms @ 48kHz 的采样数
 const FRAME_BYTES = FRAME_SAMPLES * 2; // Int16 字节数
+const PRE_ROLL_MS = 0; // 预缓冲已由「整句攒完再播」接管（见 synthesizeWithRetry），这里不再额外延迟
+const PRE_ROLL_BYTES = Math.floor((PRE_ROLL_MS / 1000) * 48000 * 2); // 48kHz Int16 字节数
 
 export type RtcIceOptions = {
   portRange: [number, number]; // ICE UDP 端口段（与 compose 发布一致）
@@ -59,6 +61,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
 
   let sendTrack: MediaStreamTrack | null = null;
   let pcm48Queue = Buffer.alloc(0); // 48kHz PCM 播放队列
+  let downResample = createStreamResampler(24000, 48000); // 下行 TTS 流式重采样（跨 chunk 连续，消金属音）
+  let prerolled = false; // 本轮是否已攒够预缓冲（断点/新一轮重置）
   let ended = false; // true = 这一轮不再有新的 PCM 进来（用于冲末尾残余）
   let closed = false;
   let pacerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -133,6 +137,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
   // 队列非空时启动出帧定时器（idle 后靠 pushAgentPcm 重启）。
   function ensurePacer() {
     if (pacerTimer !== null || closed) return;
+    if (!prerolled && pcm48Queue.length < PRE_ROLL_BYTES) return; // 预缓冲没攒够，继续攒
+    prerolled = true;
     nextFrameAt = performance.now();
     pacerTimer = setTimeout(paceTick, 0);
   }
@@ -153,13 +159,15 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       pcm48Queue.copy(padded, 0, 0, pcm48Queue.length);
       pcm48Queue = Buffer.alloc(0);
       sendFrame(opus.encode(padded, FRAME_SAMPLES));
+      prerolled = false; // 这一轮真正说完，下一轮重新预缓冲
       cbs.onPlaybackEnd?.(); // 残余也发完了，这一轮真正说完
     } else if (ended) {
       // 队列已空且整轮结束：播放完毕
+      prerolled = false;
       cbs.onPlaybackEnd?.();
       nextFrameAt = 0;
     } else {
-      // 队列空且未结束：停，等下一句的 PCM 进来再启动
+      // 队列空且未结束：停，等下一句的 PCM 进来再启动（不重置 prerolled，避免句中反复预缓冲）
       nextFrameAt = 0;
     }
   }
@@ -182,7 +190,7 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       if (closed) return;
       ended = false; // 又有新数据了（下一句），取消“已结束”状态
       const pcm24 = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
-      const pcm48 = resample(pcm24, 24000, 48000);
+      const pcm48 = downResample(pcm24);
       if (gain !== 1.0) {
         for (let i = 0; i < pcm48.length; i++) pcm48[i] = Math.round(pcm48[i] * gain); // 鸭音：在重采样后的新数组上做，不污染缓存片段
       }
@@ -200,6 +208,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
 
     clear() {
       pcm48Queue = Buffer.alloc(0);
+      downResample = createStreamResampler(24000, 48000); // 打断后重置，别让上一段的上下文污染新回复
+      prerolled = false; // 打断后重新预缓冲
       ended = false;
       if (pacerTimer !== null) {
         clearTimeout(pacerTimer);

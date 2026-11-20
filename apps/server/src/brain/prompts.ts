@@ -221,8 +221,23 @@ export function buildGenerateSystemPrompt(params: {
 }
 
 // 主动发话的系统提示词：场景式单句，不套 BLOCK_CORE 的完整情绪节奏。
-// curiosityHint 只喂给 nudge（10s 静默找话题），让它优先补全对对方的了解盲区。
-export function buildProactiveSystemPrompt(kind: 'greeting' | 'nudge' | 'followup' | 'checkin' | 'farewell' | 'coachClose', personaSystemPrompt: string, lastQuestion?: string, curiosityHint?: string): string {
+// 喂入最近对话 + 对方当前情绪，避免「不贴合场景」（否则主动发话模型是蒙着眼的，只会凭空找话题）。
+// curiosityHint 只喂给 nudge（静默找话题），且降为兜底——先「顺藤摸瓜」，接不住才补盲区。
+export function buildProactiveSystemPrompt(
+  kind: 'greeting' | 'nudge' | 'followup' | 'checkin' | 'farewell' | 'coachClose',
+  personaSystemPrompt: string,
+  opts: {
+    lastQuestion?: string;
+    curiosityHint?: string;
+    recentTurns?: string;    // 已格式化的【最近对话】块（含头），空则省略
+    mood?: MoodState | null; // 对方当前心境（EMA），据此定语气
+  } = {},
+): string {
+  const lastQuestion = opts.lastQuestion;
+  const curiosityHint = opts.curiosityHint;
+  const moodBlock = opts.mood
+    ? `【对方此刻情绪】效价 ${opts.mood.valence.toFixed(2)} / 唤醒 ${opts.mood.arousal.toFixed(2)} / 支配 ${opts.mood.dominance.toFixed(2)}（-2..+2）。据此定你的语气和话题——对方情绪越沉，越别用轻快的新话题去拽，先顺着 TA 刚说的事轻轻接住。`
+    : '';
   const task =
     kind === 'greeting'
       ? '现在通话刚接通，对方还没开口。用你的语气主动打一声招呼，像真人接起电话/视频那样自然开场。只输出 1 句，口语化、短；不背设定、不自我介绍、不急着提问。'
@@ -234,11 +249,13 @@ export function buildProactiveSystemPrompt(kind: 'greeting' | 'nudge' | 'followu
       ? '对方沉默了很久，你轻轻确认过、对方还是没回应。可能是在慢慢消化，也可能是暂时不想说了。温柔地收一句尾、给对方留门（比如"我在这儿，你想回来的时候我都在"），别失落、别催、别挽留。只输出 1 句，口语化。'
       : kind === 'farewell'
       ? '对方连续好几次没回应了，可能是忙、也可能是不想聊了。用你自己的性格收尾——可以失落、可以明媚、也可以带一点小抱怨，总之贴合你这个人的说话方式，别照抄某一句。只输出 1 句，口语化。'
-      : `对方沉默了好一会儿（超过十秒）没说话。别只问"还在吗"，主动找一个话题暖场：${curiosityHint ? '优先补全你对对方的了解盲区（见下方好奇心线索），其次是对方兴趣爱好、工作、最近在忙/在追/在想的；' : '优先问对方（兴趣爱好、工作、最近在忙/在追/在想的），这最容易让对方开口；实在没得聊了再说一点你自己。'}只输出 1~2 句，口语化，不查户口。
-注意：别一开口就猜对方"在发呆 / 在走神"——对方可能只是累了、在忙、或在想事情、心情不好，这样问显得轻浮冒犯；用更温和的方式开场。`;
+      : `对方沉默了好一会儿没说话。别只问"还在吗"。先看【最近对话】里对方最后在聊/在想的，顺着那件事轻轻接一句（顺藤摸瓜）；只有确实接不住时，才新起一个对方可能感兴趣的话题（兴趣爱好、最近在忙/在追/在想的）${curiosityHint ? '，或优先补你对对方的了解盲区（见下方好奇心线索）' : '，实在没得聊了再说一点你自己'}。只输出 1~2 句，口语化，不查户口。
+注意：别猜对方"在发呆 / 在走神"——对方可能累了、在忙、或在消化刚才的话。语气要跟【对方此刻情绪】一致——刚聊到难受、沉重的事，就别兴冲冲跳新话题。`;
   return [
     personaSystemPrompt,
-    '此刻你要主动开口（不是回应对方，因为对方还什么都没说）：',
+    '此刻你要主动开口（对方暂时没说话，由你来起头）：',
+    ...(opts.recentTurns ? [opts.recentTurns] : []),
+    ...(moodBlock ? [moodBlock] : []),
     task,
     ...(curiosityHint && kind === 'nudge' ? [curiosityHint] : []),
     '输出格式：直接输出这一句，不要解释、不要标签、不要括号、不要 emoji。在这句的最后（另起一行），额外输出机器标签 [[AWAITS:1]]（这句话在等对方回应/提问）或 [[AWAITS:0]]（只是陈述、不催回应），标签不要念出来。',
