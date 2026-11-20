@@ -342,15 +342,7 @@ export class CallSession {
     if (resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang) === this.cfg.cosyvoiceVoice && this.persona.name !== '程书衡') {
       console.warn(`[voice] ${this.persona.name} 尚未配置专属音色，暂用程书衡音色；用 npm run enroll-voices 建模后填 env。`);
     }
-    // 副语言 backchannel：复位 + 切音色 + 预生成片段（懒、按音色缓存）。
-    this.backchannel.reset();
-    const backVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
-    this.backchannel.setVoice(backVoice);
-    if (!this.backchannel.hasClips(backVoice)) {
-      this.preloadBackchannelClips(backVoice, this.persona.name).catch((e) =>
-        console.warn('[backchannel] 片段预生成失败：', e),
-      );
-    }
+    this.setupBackchannel();
     this.sed?.close();
     this.asr = this.asrFactory();
     this.acoustic = new AcousticFeatureExtractor();
@@ -363,30 +355,7 @@ export class CallSession {
       })
       .catch(() => {});
 
-    // 哭/笑检测（NLS 云端）：收 PCM、出事件。连不上/未配凭证时 onEvent 不被调用，主链路照常。
-    const hasToken = Boolean(this.cfg.nlsToken);
-    const hasAk = Boolean(this.cfg.nlsAkId && this.cfg.nlsAkSecret);
-    if (this.cfg.nlsEnabled && this.cfg.nlsAppKey && (hasToken || hasAk)) {
-      this.sed = new NlsSoundEventDetector(
-        {
-          appKey: this.cfg.nlsAppKey,
-          token: this.cfg.nlsToken || undefined,
-          akId: this.cfg.nlsAkId || undefined,
-          akSecret: this.cfg.nlsAkSecret || undefined,
-        },
-        (ev) => {
-          this.turnTaking.pendingVocals.add(ev);
-          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.turnTaking.pendingVocals.dominant());
-          this.turnTaking.scheduleVocalRespond();
-        },
-      );
-    } else if (!this.cfg.nlsEnabled) {
-      this.sed = null;
-      console.warn('[NLS] 已通过 NLS_ENABLED=false 关闭哭/笑检测');
-    } else {
-      this.sed = null;
-      console.warn('[NLS] 未配 NLS 凭证（NLS_APPKEY + NLS_TOKEN 或 NLS_ACCESS_KEY_ID/SECRET），哭/笑检测关闭');
-    }
+    this.setupNls();
 
     // 通话会话记录：结束上一通（若有残留），开新一条；失败不阻断建连。
     if (this.currentSessionId) this.sessions.end(this.currentSessionId).catch(() => {});
@@ -466,6 +435,45 @@ export class CallSession {
     return { sdp: answer };
   }
 
+  // 副语言 backchannel：复位 + 切音色 + 预生成片段（懒、按音色缓存）。
+  private setupBackchannel(): void {
+    this.backchannel.reset();
+    const backVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
+    this.backchannel.setVoice(backVoice);
+    if (!this.backchannel.hasClips(backVoice)) {
+      this.preloadBackchannelClips(backVoice, this.persona.name).catch((e) =>
+        console.warn('[backchannel] 片段预生成失败：', e),
+      );
+    }
+  }
+
+  // 哭/笑检测（NLS 云端）：收 PCM、出事件。连不上/未配凭证时 onEvent 不被调用，主链路照常。
+  private setupNls(): void {
+    const hasToken = Boolean(this.cfg.nlsToken);
+    const hasAk = Boolean(this.cfg.nlsAkId && this.cfg.nlsAkSecret);
+    if (this.cfg.nlsEnabled && this.cfg.nlsAppKey && (hasToken || hasAk)) {
+      this.sed = new NlsSoundEventDetector(
+        {
+          appKey: this.cfg.nlsAppKey,
+          token: this.cfg.nlsToken || undefined,
+          akId: this.cfg.nlsAkId || undefined,
+          akSecret: this.cfg.nlsAkSecret || undefined,
+        },
+        (ev) => {
+          this.turnTaking.pendingVocals.add(ev);
+          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.turnTaking.pendingVocals.dominant());
+          this.turnTaking.scheduleVocalRespond();
+        },
+      );
+    } else if (!this.cfg.nlsEnabled) {
+      this.sed = null;
+      console.warn('[NLS] 已通过 NLS_ENABLED=false 关闭哭/笑检测');
+    } else {
+      this.sed = null;
+      console.warn('[NLS] 未配 NLS 凭证（NLS_APPKEY + NLS_TOKEN 或 NLS_ACCESS_KEY_ID/SECRET），哭/笑检测关闭');
+    }
+  }
+
   private onAsrResult(text: string, isFinal: boolean): void {
     console.log('[ASR] 结果：', JSON.stringify({ text, isFinal }));
     const t = text.trim();
@@ -521,13 +529,25 @@ export class CallSession {
     if (!this.rtc) return;
     const tStart = Date.now();
     const { gen: myGen, signal } = this.gate.begin();
-    const searchEnabled = Boolean(this.cfg.bochaApiKey);
     this.speaking = true;
-    let reachedEnd = false;
+    // 决策 → 召回 → 装配 → 出句 → 记结果 全在 runTurnPipeline；这里只留门牌 + 观测外壳。
     await this.obs.trace('turn', {
       metadata: { kind: 'respond', personaName: this.persona.name, turnIndex: this.turnCount, dominantVocal },
       input: { text: userText, vocals, dominantVocal },
-    }, async () => {
+    }, () => this.runTurnPipeline(myGen, signal, tStart, userText, vocals, dominantVocal));
+  }
+
+  // respond 的主线：决策 → 出句 → 记结果。由 respond 的 obs.trace 包住；内部 try/finally 负责「半路被打断」收尾。
+  private async runTurnPipeline(
+    myGen: number,
+    signal: AbortSignal,
+    tStart: number,
+    userText: string,
+    vocals: VocalizationEvent[],
+    dominantVocal: DominantVocal,
+  ): Promise<void> {
+    const searchEnabled = Boolean(this.cfg.bochaApiKey);
+    let reachedEnd = false;
     try {
     const acoustics = this.acoustic?.finalize(userText) ?? neutralAcoustic();
     if (!this.userGender) {
@@ -658,7 +678,6 @@ export class CallSession {
     } finally {
       this.cleanupInterrupted(myGen, reachedEnd);
     }
-    });
   }
 
   private async speakProactive(kind: ProactiveKind) {
