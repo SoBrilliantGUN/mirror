@@ -75,6 +75,7 @@ async function bootBackend(): Promise<void> {
   const env = settingsToEnv(settings);
   if (databaseUrl) env.DATABASE_URL = databaseUrl;
   env.GREETING_CACHE_DIR = join(app.getPath('userData'), 'greetings-cache');
+  env.HOLIDAY_CACHE_DIR = join(app.getPath('userData'), 'holiday-cache');
   env.PORT = String(SERVER_PORT);
   env.ICE_HOST_ADDRESS = '127.0.0.1';
   env.MIRROR_SKIP_DOTENV = '1'; // 桌面版只用注入的 key，不读仓库 .env

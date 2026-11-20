@@ -6,7 +6,12 @@ import { join } from 'node:path';
 export type HolidayEntry = { isOffDay: boolean; name: string };
 export type HolidayMap = Map<string, HolidayEntry>; // 'YYYY-MM-DD' → 条目（isOffDay: true=放假 / false=调休补班）
 
-const CACHE_FILE = join(process.cwd(), 'apps', 'server', '.holiday-cache.json');
+// 桌面版由 Electron 主进程注入到 userData 下；`npm start` 仍用仓库相对路径（apps/server/）。
+function holidayCacheDir(): string {
+  return process.env.HOLIDAY_CACHE_DIR ?? join(process.cwd(), 'apps', 'server');
+}
+
+const CACHE_FILE = join(holidayCacheDir(), '.holiday-cache.json');
 const DATA_URL = (year: number) =>
   `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/${year}.json`;
 
@@ -32,7 +37,7 @@ function loadCache(year: number): HolidayMap | null {
 
 function saveCache(year: number, map: HolidayMap): void {
   try {
-    mkdirSync(join(process.cwd(), 'apps', 'server'), { recursive: true });
+    mkdirSync(holidayCacheDir(), { recursive: true });
     const days: Record<string, HolidayEntry> = {};
     for (const [date, v] of map) days[date] = v;
     writeFileSync(CACHE_FILE, JSON.stringify({ year, days }, null, 2));
