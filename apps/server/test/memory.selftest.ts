@@ -26,11 +26,11 @@ function ok(name: string, fn: () => void) {
 }
 
 const recalled = (c: string[] = [], f: string[] = [], p: string[] = [], e: string[] = [], i: string[] = []): RecalledMemories => ({
-  constraint: c.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'constraint' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
-  profile: i.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'profile' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
-  fact: f.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'fact' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
-  preference: p.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'preference' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
-  episodic: e.map((x) => ({ id: x, userId: 'u', characterId: 'c', kind: 'episodic' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  constraint: c.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'constraint' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  profile: i.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'profile' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  fact: f.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'fact' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  preference: p.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'preference' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  episodic: e.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'episodic' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
 });
 
 const turn = (text: string, role: 'user' | 'agent' = 'user'): HistoryEntry => ({ kind: 'turn', role, text });
@@ -130,8 +130,8 @@ ok('id 相同去重', () => {
 ok('新增按 kind 归桶', () => {
   const base = recalled([], [], [], [], []);
   const extra = [
-    { id: 'f1', userId: 'u', characterId: 'c', kind: 'fact' as const, content: '事实', entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' },
-    { id: 'e1', userId: 'u', characterId: 'c', kind: 'episodic' as const, content: '事件', entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' },
+    { id: 'f1', userId: 'u', personaName: 'c', kind: 'fact' as const, content: '事实', entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' },
+    { id: 'e1', userId: 'u', personaName: 'c', kind: 'episodic' as const, content: '事件', entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' },
   ];
   const merged = mergeRecalled(base, extra);
   assert.equal(merged.fact.length, 1);

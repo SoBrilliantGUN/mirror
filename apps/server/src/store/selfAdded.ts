@@ -22,7 +22,7 @@ function toSelfAdded(r: Row): SelfAdded {
   return {
     id: r.id,
     userId: r.user_id,
-    characterId: r.character_id,
+    personaName: r.character_id,
     category: r.category,
     content: r.content,
     mentionCount: r.mention_count,
@@ -34,39 +34,39 @@ function toSelfAdded(r: Row): SelfAdded {
 
 export function createSelfAddedStore(pool: Pool): SelfAddedStore {
   return {
-    async listActive(characterId, userId): Promise<SelfAdded[]> {
+    async listActive(personaName, userId): Promise<SelfAdded[]> {
       const { rows } = await pool.query<Row>(
         `SELECT * FROM persona_additions WHERE character_id = $1 AND user_id = $2 AND active ORDER BY created_at ASC`,
-        [characterId, userId],
+        [personaName, userId],
       );
       return rows.map(toSelfAdded);
     },
 
-    async write(characterId, userId, { category, content }): Promise<SelfAdded> {
+    async write(personaName, userId, { category, content }): Promise<SelfAdded> {
       const id = randomUUID();
       await pool.query(
         `INSERT INTO persona_additions (id, character_id, user_id, category, content) VALUES ($1, $2, $3, $4, $5)`,
-        [id, characterId, userId, category, content],
+        [id, personaName, userId, category, content],
       );
       const { rows } = await pool.query<Row>(`SELECT * FROM persona_additions WHERE id = $1`, [id]);
       return toSelfAdded(rows[0]);
     },
 
-    async touch(characterId, userId, ids): Promise<void> {
+    async touch(personaName, userId, ids): Promise<void> {
       if (ids.length === 0) return;
       await pool.query(
         `UPDATE persona_additions SET mention_count = mention_count + 1, last_mentioned_at = now() WHERE character_id = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
-        [characterId, userId, ids],
+        [personaName, userId, ids],
       );
     },
 
-    async archiveStale(characterId, userId, ttlDays): Promise<number> {
+    async archiveStale(personaName, userId, ttlDays): Promise<number> {
       const { rows } = await pool.query<{ id: string }>(
         `UPDATE persona_additions SET active = false
           WHERE character_id = $1 AND user_id = $2 AND active
             AND last_mentioned_at < now() - make_interval(days => $3)
           RETURNING id`,
-        [characterId, userId, ttlDays],
+        [personaName, userId, ttlDays],
       );
       return rows.length;
     },

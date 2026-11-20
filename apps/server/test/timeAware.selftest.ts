@@ -25,7 +25,7 @@ function ok(name: string, fn: () => void) {
 const NOV12_0215 = new Date(Date.UTC(2026, 10, 11, 18, 15));
 
 const mem = (content: string, anchor?: TimeAnchor): Memory => ({
-  id: 'm1', userId: 'u', characterId: 'c', kind: 'fact', content,
+  id: 'm1', userId: 'u', personaName: 'c', kind: 'fact', content,
   entityId: null, dimension: null, aspect: null, anchor,
   accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '',
 });

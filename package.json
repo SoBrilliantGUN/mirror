@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx apps/server/test/decide.selftest.ts && tsx apps/server/test/speech.selftest.ts && tsx apps/server/test/acoustic.selftest.ts && tsx apps/server/test/resample.selftest.ts && tsx apps/server/test/memory.selftest.ts && tsx apps/server/test/timeAware.selftest.ts && tsx apps/server/test/safety.selftest.ts && tsx apps/server/test/selfAdd.selftest.ts && tsx apps/server/test/interest.selftest.ts && tsx apps/server/test/search.selftest.ts && tsx apps/server/test/activation.selftest.ts && tsx apps/server/test/farewell.selftest.ts && tsx apps/server/test/ontology.selftest.ts && tsx apps/server/test/coach.selftest.ts",
+    "test": "tsx apps/server/test/decide.selftest.ts && tsx apps/server/test/speech.selftest.ts && tsx apps/server/test/acoustic.selftest.ts && tsx apps/server/test/resample.selftest.ts && tsx apps/server/test/memory.selftest.ts && tsx apps/server/test/timeAware.selftest.ts && tsx apps/server/test/safety.selftest.ts && tsx apps/server/test/selfAdd.selftest.ts && tsx apps/server/test/topicSwitch.selftest.ts && tsx apps/server/test/search.selftest.ts && tsx apps/server/test/activation.selftest.ts && tsx apps/server/test/farewell.selftest.ts && tsx apps/server/test/ontology.selftest.ts && tsx apps/server/test/coach.selftest.ts",
     "demo": "tsx apps/server/src/run-demo.ts",
     "samples": "tsx apps/server/src/scripts/gen-emotion-samples.ts",
     "enroll-voices": "tsx apps/server/src/scripts/enroll-voices.ts",

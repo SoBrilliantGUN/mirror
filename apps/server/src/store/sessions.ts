@@ -6,10 +6,10 @@ import type { DependenceSignals } from '@mirror/contracts';
 export function createSessionsStore(pool: Pool) {
   return {
     // 开一条会话记录，返回 id（挂断时用它补 ended_at）。
-    async start(characterId: string, userId: string): Promise<string> {
+    async start(personaName: string, userId: string): Promise<string> {
       const { rows } = await pool.query(
         'INSERT INTO call_sessions (character_id, user_id) VALUES ($1, $2) RETURNING id',
-        [characterId, userId],
+        [personaName, userId],
       );
       return rows[0].id as string;
     },
@@ -26,19 +26,19 @@ export function createSessionsStore(pool: Pool) {
     },
 
     // 过度依赖行为信号：纯确定性，不进 LLM。
-    async signals(characterId: string, userId: string, currentId: string): Promise<DependenceSignals> {
+    async signals(personaName: string, userId: string, currentId: string): Promise<DependenceSignals> {
       const [cur, cnt, prev] = await Promise.all([
         pool.query('SELECT started_at FROM call_sessions WHERE id = $1', [currentId]),
         pool.query(
           `SELECT count(*)::int AS c FROM call_sessions
             WHERE character_id = $1 AND user_id = $2 AND started_at >= now() - interval '7 days'`,
-          [characterId, userId],
+          [personaName, userId],
         ),
         pool.query(
           `SELECT started_at, ended_at FROM call_sessions
             WHERE character_id = $1 AND user_id = $2 AND id <> $3
             ORDER BY started_at DESC LIMIT 1`,
-          [characterId, userId, currentId],
+          [personaName, userId, currentId],
         ),
       ]);
 

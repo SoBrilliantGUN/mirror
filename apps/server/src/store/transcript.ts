@@ -40,13 +40,13 @@ export type TurnRow = {
 
 export function createTranscriptStore(pool: Pool) {
   return {
-    async insert(characterId: string, userId: string, t: TurnInsert): Promise<void> {
+    async insert(personaName: string, userId: string, t: TurnInsert): Promise<void> {
       await pool.query(
         `INSERT INTO call_turns
            (character_id, user_id, session_id, role, text, turn_index, emotion, affect, acoustic, vocals, recalled, latency_ms, frame, mode, stance, asked)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
-          characterId,
+          personaName,
           userId,
           t.sessionId ?? null,
           t.role,
@@ -67,11 +67,11 @@ export function createTranscriptStore(pool: Pool) {
     },
 
     async list(
-      characterId: string,
+      personaName: string,
       userId: string,
       opts?: { since?: string; limit?: number },
     ): Promise<TurnRow[]> {
-      const params: unknown[] = [characterId, userId];
+      const params: unknown[] = [personaName, userId];
       let where = 'character_id = $1 AND user_id = $2';
       if (opts?.since) {
         params.push(opts.since);

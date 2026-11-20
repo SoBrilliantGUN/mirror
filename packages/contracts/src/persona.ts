@@ -1,6 +1,6 @@
 // —— 角色卡（L6）——
 // 人物标识：用「中文名」（如 "程书衡"）当主键，不是数字 ID。
-// 全库凡叫 characterId 的字段，存的都是这个 PersonaName（见 memory.ts 顶部注释）。
+// 全库凡叫 personaName 的字段，存的都是这个 PersonaName（见 memory.ts 顶部注释）。
 export type PersonaName = string;
 
 export type Persona = {

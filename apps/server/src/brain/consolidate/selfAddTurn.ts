@@ -30,18 +30,18 @@ export async function consolidateSelfAdded(deps: {
   model: string;
   store: SelfAddedStore;
   userId: string;
-  characterId: string;
+  personaName: string;
   agentText: string;
   personaSystemPrompt: string;
   embedder?: Embedder;
 }): Promise<number> {
-  const { llm, model, store, userId, characterId, agentText, personaSystemPrompt, embedder } = deps;
+  const { llm, model, store, userId, personaName, agentText, personaSystemPrompt, embedder } = deps;
   if (!agentText.trim()) return 0;
 
   // 已有增补（供冲突自检 + 去重）。查询失败按无处理，不阻断。
   let existing: SelfAdded[] = [];
   try {
-    existing = await store.listActive(characterId, userId);
+    existing = await store.listActive(personaName, userId);
   } catch (e) {
     console.warn('[self-add] 查已有增补失败，按无处理：', e);
   }
@@ -92,7 +92,7 @@ export async function consolidateSelfAdded(deps: {
   }
 
   try {
-    await store.write(characterId, userId, { category: parsed.category, content });
+    await store.write(personaName, userId, { category: parsed.category, content });
     return 1;
   } catch (e) {
     console.warn('[self-add] 写增补失败：', e);
@@ -118,12 +118,12 @@ export async function touchSelfAdded(deps: {
   embedder: Embedder;
   store: SelfAddedStore;
   userId: string;
-  characterId: string;
+  personaName: string;
   text: string;
 }): Promise<number> {
-  const { embedder, store, userId, characterId, text } = deps;
+  const { embedder, store, userId, personaName, text } = deps;
   if (!text.trim()) return 0;
-  const active = await store.listActive(characterId, userId);
+  const active = await store.listActive(personaName, userId);
   if (active.length === 0) return 0;
   try {
     const [qv] = await embedder.embed([text]);
@@ -131,7 +131,7 @@ export async function touchSelfAdded(deps: {
     const ids = active
       .filter((_, i) => cosine(qv, vecs[i]) >= MENTION_SIM_THRESHOLD)
       .map((s) => s.id);
-    await store.touch(characterId, userId, ids);
+    await store.touch(personaName, userId, ids);
     return ids.length;
   } catch (e) {
     console.warn('[self-add] 提及检测失败：', e);

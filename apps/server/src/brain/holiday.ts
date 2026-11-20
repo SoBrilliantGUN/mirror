@@ -2,9 +2,10 @@
 // 落盘缓存最近一年。数据源是国务院节假日安排（NateScarlet/holiday-cn 仓库每年更新）。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { HolidayEntry, HolidayMap } from '@mirror/contracts';
 
-export type HolidayEntry = { isOffDay: boolean; name: string };
-export type HolidayMap = Map<string, HolidayEntry>; // 'YYYY-MM-DD' → 条目（isOffDay: true=放假 / false=调休补班）
+// HolidayEntry / HolidayMap 类型已上移到 contracts/time.ts（TimeAware 签名要用），这里 re-export 兼容旧引用。
+export type { HolidayEntry, HolidayMap };
 
 // 桌面版由 Electron 主进程注入到 userData 下；`npm start` 仍用仓库相对路径（apps/server/）。
 function holidayCacheDir(): string {

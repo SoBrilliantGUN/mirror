@@ -13,7 +13,7 @@ function ok(name: string, fn: () => void) {
 }
 
 const sa = (content: string, category = '喜好'): SelfAdded => ({
-  id: '1', userId: 'u', characterId: 'c', category, content,
+  id: '1', userId: 'u', personaName: 'c', category, content,
   mentionCount: 0, lastMentionedAt: null, active: true, createdAt: '',
 });
 

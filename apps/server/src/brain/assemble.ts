@@ -39,10 +39,28 @@ export type PrefetchCache = {
   clear(): void;
 };
 
+// 一次性预取缓存：每 key 单槽，set 覆盖、take 取走即清空（每次预取只服务「紧接着的下一轮」）。
+export function createPrefetchCache(): PrefetchCache {
+  const slots = new Map<string, Memory[]>();
+  return {
+    take(key) {
+      const v = slots.get(key) ?? null;
+      slots.delete(key);
+      return v;
+    },
+    set(key, memories) {
+      slots.set(key, memories);
+    },
+    clear() {
+      slots.clear();
+    },
+  };
+}
+
 export type AssembleDeps = {
   store: MemoryStore;
   userId: string;
-  characterId: string;
+  personaName: string;
   memoryBudget: number;
   compress: (entries: HistoryEntry[]) => Promise<HistoryEntry[]>;
   // 时间感知（L5）：当前时间上下文 + 临近日期 + 作息关怀，装配成 [TIME] 块。
@@ -150,7 +168,7 @@ export function mergeRecalled(base: RecalledMemories, extra: Memory[]): Recalled
 
 // 记忆召回 + 历史压缩：与打分（planTurn）无关，可并行跑，省掉一次串行等待。
 export async function recallContext(deps: AssembleDeps, input: RecallInput): Promise<RecalledContext> {
-  const { store, userId, characterId, compress, personaMatch, prefetchCache, timeAware, goals } = deps;
+  const { store, userId, personaName, compress, personaMatch, prefetchCache, timeAware, goals } = deps;
   const text = input.text || '当前对话';
   const now = new Date();
 
@@ -159,7 +177,7 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
   // 每个网络/DB 步骤都各自 try/catch 降级为空，不因单点失败阻断对话。
   const [recalled, freshDetails, compressedHistory, coverage, upcoming, selfAdded, activeGoals] = await Promise.all([
     (async (): Promise<RecalledMemories> => {
-      try { return await store.recall(characterId, userId, text); }
+      try { return await store.recall(personaName, userId, text); }
       catch (e) { console.warn('[memory] 召回失败，降级为空记忆：', e); return EMPTY_RECALL; }
     })(),
     (async (): Promise<PersonaDetail[]> => {
@@ -169,19 +187,19 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
     })(),
     compress(input.history),
     (async (): Promise<CoverageEntry[]> => {
-      try { return await store.getCoverage(characterId, userId); }
+      try { return await store.getCoverage(personaName, userId); }
       catch (e) { console.warn('[memory] 覆盖率查询失败：', e); return []; }
     })(),
     (async (): Promise<UpcomingDate[]> => {
-      try { return await timeAware.upcomingDates(characterId, userId, now); }
+      try { return await timeAware.upcomingDates(personaName, userId, now); }
       catch (e) { console.warn('[time] 临近日期查询失败，降级为空：', e); return []; }
     })(),
     (async (): Promise<SelfAdded[]> => {
-      try { return await deps.selfAdded.listActive(characterId, userId); }
+      try { return await deps.selfAdded.listActive(personaName, userId); }
       catch (e) { console.warn('[self-add] 召回失败，降级为空：', e); return []; }
     })(),
     (async (): Promise<GrowthGoal[]> => {
-      try { return await goals.listActive(characterId, userId); }
+      try { return await goals.listActive(personaName, userId); }
       catch (e) { console.warn('[goal] 课题召回失败，降级为空：', e); return []; }
     })(),
   ]);
@@ -189,7 +207,7 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
   // look-ahead 预取：后台上一轮预热命中的记忆并入本轮（纯函数，无 IO）。
   let recalledMerged = recalled;
   if (prefetchCache) {
-    const prefetched = prefetchCache.take(`${characterId}:${userId}`) ?? [];
+    const prefetched = prefetchCache.take(`${personaName}:${userId}`) ?? [];
     recalledMerged = mergeRecalled(recalled, prefetched);
   }
   // 人物记忆渐进式加载（会话内合并去重）。

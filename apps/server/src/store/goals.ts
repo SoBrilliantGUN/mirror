@@ -22,13 +22,15 @@ type GoalRow = {
   updated_at: Date | string;
 };
 
+// 注意：这里的 STAGES 含 'done'，因为落库后的 GrowthGoal.stage 可能是 done（由 complete() 写入）；
+// 与 consolidate/goalTurn.ts 里那份「只校验 LLM 输出 G/R/O/W」的 STAGES 用途不同，别混。
 const STAGES = new Set<GrowthStage>(['goal', 'reality', 'options', 'will', 'done']);
 
 function toGoal(r: GoalRow): GrowthGoal {
   return {
     id: r.id,
     userId: r.user_id,
-    characterId: r.character_id,
+    personaName: r.character_id,
     title: r.title,
     goal: r.goal,
     reality: r.reality,
@@ -50,35 +52,35 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
   };
 
   return {
-    async listActive(characterId, userId): Promise<GrowthGoal[]> {
+    async listActive(personaName, userId): Promise<GrowthGoal[]> {
       const { rows } = await pool.query<GoalRow>(
         `SELECT * FROM growth_goals
           WHERE character_id = $1 AND user_id = $2 AND status = 'active'
           ORDER BY updated_at ASC`,
-        [characterId, userId],
+        [personaName, userId],
       );
       return rows.map(toGoal);
     },
 
-    async create(characterId, userId, input): Promise<GrowthGoal> {
+    async create(personaName, userId, input): Promise<GrowthGoal> {
       // 同名活跃课题复用（标题去重），避免后台巩固反复建「和妈妈的边界」这种重复条目。
       const { rows: dup } = await pool.query<GoalRow>(
         `SELECT * FROM growth_goals
           WHERE character_id = $1 AND user_id = $2 AND title = $3 AND status = 'active'
           ORDER BY created_at ASC LIMIT 1`,
-        [characterId, userId, input.title],
+        [personaName, userId, input.title],
       );
       if (dup[0]) return toGoal(dup[0]);
 
       const { rows } = await pool.query<GoalRow>(
         `INSERT INTO growth_goals (character_id, user_id, title)
          VALUES ($1, $2, $3) RETURNING *`,
-        [characterId, userId, input.title],
+        [personaName, userId, input.title],
       );
       return toGoal(rows[0]);
     },
 
-    async update(characterId, userId, id, patch): Promise<GrowthGoal | null> {
+    async update(personaName, userId, id, patch): Promise<GrowthGoal | null> {
       // 只更新传入的字段；updated_at 跟着走。用 EXISTS 兜底「这条不在这位用户/人物名下」。
       const fields: string[] = [];
       const vals: unknown[] = [];
@@ -96,7 +98,7 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
       if (patch.progressNote !== undefined) set('progress_note', patch.progressNote);
       if (fields.length === 0) return getById(id);
       fields.push(`updated_at = now()`);
-      vals.push(id, characterId, userId);
+      vals.push(id, personaName, userId);
       const { rows } = await pool.query<GoalRow>(
         `UPDATE growth_goals SET ${fields.join(', ')}
           WHERE id = $${i} AND character_id = $${i + 1} AND user_id = $${i + 2} RETURNING *`,
@@ -105,28 +107,28 @@ export function createGoalsStore(pool: Pool): GrowthGoalStore {
       return rows[0] ? toGoal(rows[0]) : null;
     },
 
-    async complete(characterId, userId, id, note = null): Promise<void> {
+    async complete(personaName, userId, id, note = null): Promise<void> {
       await pool.query(
         `UPDATE growth_goals SET status = 'done', stage = 'done',
            progress_note = COALESCE($4, progress_note), updated_at = now()
           WHERE id = $1 AND character_id = $2 AND user_id = $3`,
-        [id, characterId, userId, note],
+        [id, personaName, userId, note],
       );
     },
 
-    async archive(characterId, userId, id): Promise<void> {
+    async archive(personaName, userId, id): Promise<void> {
       await pool.query(
         `UPDATE growth_goals SET status = 'archived', updated_at = now()
           WHERE id = $1 AND character_id = $2 AND user_id = $3`,
-        [id, characterId, userId],
+        [id, personaName, userId],
       );
     },
 
-    async touch(characterId, userId, id): Promise<void> {
+    async touch(personaName, userId, id): Promise<void> {
       await pool.query(
         `UPDATE growth_goals SET last_reviewed_at = now(), updated_at = now()
           WHERE id = $1 AND character_id = $2 AND user_id = $3`,
-        [id, characterId, userId],
+        [id, personaName, userId],
       );
     },
   };

@@ -20,7 +20,7 @@ export type AfterTurnDeps = {
   embedder: Embedder;
   classify: (raw: string) => Promise<MemoryKind | null>;
   userId: string;
-  characterId: string;
+  personaName: string;
   userText: string;
   agentText: string;
   personaSystemPrompt: string;
@@ -32,26 +32,26 @@ export type AfterTurnDeps = {
 export async function consolidateAfterTurn(deps: AfterTurnDeps): Promise<{ writtenIds: string[]; facts: string[] }> {
   const {
     llm, model, memory, goals, selfAdded, embedder, classify,
-    userId, characterId, userText, agentText, personaSystemPrompt, frame, prefetchCache, retractIds,
+    userId, personaName, userText, agentText, personaSystemPrompt, frame, prefetchCache, retractIds,
   } = deps;
 
   // 主写（await）：返回本轮写入 id + 事实，供会话更新 prevTurnMemoryIds / userSaid。
   const main = consolidateTurn({
-    llm, model, store: memory, classify, userId, characterId, userText, agentText, retractIds,
+    llm, model, store: memory, classify, userId, personaName, userText, agentText, retractIds,
   });
 
   // 其余后台巩固：fire-and-forget。
-  prefetchNextTurn({ store: memory, userId, characterId, query: userText }, prefetchCache)
+  prefetchNextTurn({ store: memory, userId, personaName, query: userText }, prefetchCache)
     .catch((e) => console.warn('[memory] 后台预取失败：', e));
   if (frame === 'coach') {
-    consolidateGoal({ llm, model, store: goals, userId, characterId, userText, agentText })
+    consolidateGoal({ llm, model, store: goals, userId, personaName, userText, agentText })
       .catch((e) => console.warn('[goal] 后台课题巩固失败：', e));
   }
-  consolidateSelfAdded({ llm, model, store: selfAdded, userId, characterId, agentText, personaSystemPrompt, embedder })
+  consolidateSelfAdded({ llm, model, store: selfAdded, userId, personaName, agentText, personaSystemPrompt, embedder })
     .catch((e) => console.warn('[self-add] 后台写增补失败：', e));
-  touchSelfAdded({ embedder, store: selfAdded, userId, characterId, text: `${userText}\n${agentText}` })
+  touchSelfAdded({ embedder, store: selfAdded, userId, personaName, text: `${userText}\n${agentText}` })
     .catch((e) => console.warn('[self-add] 后台提及检测失败：', e));
-  selfAdded.archiveStale(characterId, userId, SELF_ADDED_TTL_DAYS)
+  selfAdded.archiveStale(personaName, userId, SELF_ADDED_TTL_DAYS)
     .catch((e) => console.warn('[self-add] 归档过期失败：', e));
 
   return main;

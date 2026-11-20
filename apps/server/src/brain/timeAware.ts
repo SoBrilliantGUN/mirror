@@ -1,4 +1,5 @@
 import type {
+  HolidayMap,
   MemoryStore,
   RecalledMemories,
   TimeAnchor,
@@ -6,7 +7,6 @@ import type {
   TimeContext,
   UpcomingDate,
 } from '@mirror/contracts';
-import type { HolidayMap } from './holiday';
 import { shanghaiParts, shanghaiMidnight, startOfDay } from './timezone';
 
 // 时间感知（L5）：三层都只在通话内被动体现，不推送、不调度。
@@ -117,12 +117,12 @@ export function relationOf(content: string): string {
 // B：临近/当天命中的时间锚点（窗口默认 7 天，含当天）。无则空数组。
 export async function upcomingDates(
   store: Pick<MemoryStore, 'listAnchored'>,
-  characterId: string,
+  personaName: string,
   userId: string,
   now: Date,
   windowDays = 7,
 ): Promise<UpcomingDate[]> {
-  const anchored = await store.listAnchored(characterId, userId);
+  const anchored = await store.listAnchored(personaName, userId);
   const today = startOfDay(now);
   const out: UpcomingDate[] = [];
   for (const m of anchored) {
@@ -157,8 +157,8 @@ export function scheduleCareHint(now: Date, recalled: RecalledMemories): string 
 export function createTimeAware(store: Pick<MemoryStore, 'listAnchored'>, holidays: HolidayMap = new Map()): TimeAware {
   return {
     currentTimeContext: (now) => currentTimeContext(now, holidays),
-    upcomingDates: (characterId, userId, now, windowDays) =>
-      upcomingDates(store, characterId, userId, now, windowDays),
+    upcomingDates: (personaName, userId, now, windowDays) =>
+      upcomingDates(store, personaName, userId, now, windowDays),
     scheduleCareHint,
   };
 }

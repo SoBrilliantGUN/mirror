@@ -81,6 +81,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
 
   // 人设增补：陪伴者底座之外的软细节（爱好/口味/小回忆/习惯）。独立于用户长期记忆，
   // 按 character_id + user_id 隔离。提及驱动衰减：last_mentioned_at 越久越旧、archiveStale 归档。
+  // 表名 persona_additions 对应 TS 类型 SelfAdded（contracts/selfAdded.ts）——「persona」是旧词，别与记忆类型 profile（关于用户）混淆。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS persona_additions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -50,12 +50,12 @@ export async function consolidateTurn(deps: {
   store: MemoryStore;
   classify: (raw: string) => Promise<MemoryKind | null>;
   userId: string;
-  characterId: string;
+  personaName: string;
   userText: string;
   agentText: string;
   retractIds?: string[]; // 上一轮写入的记忆 id：本轮若是纠正，先按 id 精确撤销它们
 }): Promise<{ wrote: number; writtenIds: string[]; facts: string[] }> {
-  const { llm, model, store, classify, userId, characterId, userText, agentText, retractIds } = deps;
+  const { llm, model, store, classify, userId, personaName, userText, agentText, retractIds } = deps;
   if (!userText.trim()) return { wrote: 0, writtenIds: [], facts: [] };
 
   let out: ExtractOutput;
@@ -88,7 +88,7 @@ export async function consolidateTurn(deps: {
       const anchor = parseTimeAnchor(content, now) ?? m.anchor;
       // content 里的相对词（明天/下周三）换成折算后的具体日期，避免存进去的「明天」过几天失效。
       const rewritten = rewriteRelativeTime(content, now);
-      const mem = await store.write(characterId, userId, { kind, content: rewritten, dimension: m.dimension || null, aspect: m.aspect || null, anchor: anchor ?? null });
+      const mem = await store.write(personaName, userId, { kind, content: rewritten, dimension: m.dimension || null, aspect: m.aspect || null, anchor: anchor ?? null });
       writtenIds.push(mem.id);
       wrote++;
     } catch (e) {
@@ -102,7 +102,7 @@ export async function consolidateTurn(deps: {
   if (retract.length > 0 && retractIds && retractIds.length > 0) {
     for (const id of retractIds) {
       try {
-        const n = await store.retractById(characterId, userId, id);
+        const n = await store.retractById(personaName, userId, id);
         if (n > 0) console.log(`[memory] 精确撤销上一轮记忆（id ${id.slice(0, 8)}…）`);
       } catch (e) {
         console.warn('[memory] 精确撤销记忆失败：', e);
@@ -111,7 +111,7 @@ export async function consolidateTurn(deps: {
   }
   for (const kw of retract) {
     try {
-      const n = await store.retract(characterId, userId, kw);
+      const n = await store.retract(personaName, userId, kw);
       if (n > 0) console.log(`[memory] 撤销错误记忆（关键词「${kw}」）：${n} 条`);
     } catch (e) {
       console.warn('[memory] 撤销记忆失败：', e);
@@ -153,35 +153,17 @@ export function parseRetraction(raw: string): string[] {
 
 // look-ahead 预取：用上一轮的文字预热下一轮可能用到的记忆（纯 best-effort）。返回命中条数。
 export async function prefetchNextTurn(
-  deps: { store: MemoryStore; userId: string; characterId: string; query: string },
+  deps: { store: MemoryStore; userId: string; personaName: string; query: string },
   cache: PrefetchCache,
 ): Promise<number> {
-  const key = `${deps.characterId}:${deps.userId}`;
+  const key = `${deps.personaName}:${deps.userId}`;
   const query = deps.query.trim() || '当前对话';
   try {
-    const hits = await deps.store.search(deps.characterId, deps.userId, query);
+    const hits = await deps.store.search(deps.personaName, deps.userId, query);
     if (hits.length > 0) cache.set(key, hits);
     return hits.length;
   } catch (e) {
     console.warn('[memory] 预取失败，跳过：', e);
     return 0;
   }
-}
-
-// 一次性预取缓存：每 key 单槽，set 覆盖、take 取走即清空（每次预取只服务「紧接着的下一轮」）。
-export function createPrefetchCache(): PrefetchCache {
-  const slots = new Map<string, Memory[]>();
-  return {
-    take(key) {
-      const v = slots.get(key) ?? null;
-      slots.delete(key);
-      return v;
-    },
-    set(key, memories) {
-      slots.set(key, memories);
-    },
-    clear() {
-      slots.clear();
-    },
-  };
 }

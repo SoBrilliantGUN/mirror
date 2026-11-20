@@ -19,7 +19,7 @@ const mem = (
   lastAccess: string | null = null,
   kind: MemoryKind = 'episodic',
 ): Memory => ({
-  id: '1', userId: 'u', characterId: 'c', kind, content: 'x',
+  id: '1', userId: 'u', personaName: 'c', kind, content: 'x',
   entityId: null, dimension: null, aspect: null,
   accessCount, lastAccess, superseded: false, version: 1, createdAt,
 });

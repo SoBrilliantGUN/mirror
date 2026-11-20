@@ -17,7 +17,7 @@ export type GrowthStage = 'goal' | 'reality' | 'options' | 'will' | 'done';
 export type GrowthGoal = {
   id: string;
   userId: string;
-  characterId: string;
+  personaName: string;
   title: string;            // 课题名（如「和妈妈的边界」）
   goal: string | null;      // G：她想要的未来
   reality: string | null;   // R：现状/障碍
@@ -33,18 +33,18 @@ export type GrowthGoal = {
 
 export interface GrowthGoalStore {
   // 列出进行中的课题（status = active），供 [GOAL] 块注入；按 updated_at 升序。
-  listActive(characterId: string, userId: string): Promise<GrowthGoal[]>;
+  listActive(personaName: string, userId: string): Promise<GrowthGoal[]>;
   // 新建一条课题（重复 title 时复用已有活跃条）。返回最终那条。
-  create(characterId: string, userId: string, input: { title: string; theme?: string | null }): Promise<GrowthGoal>;
+  create(personaName: string, userId: string, input: { title: string; theme?: string | null }): Promise<GrowthGoal>;
   // 就地更新一条课题的 GROW 字段 + stage；按 title 匹配（后台巩固用）。
-  update(characterId: string, userId: string, id: string, patch: {
+  update(personaName: string, userId: string, id: string, patch: {
     title?: string; goal?: string | null; reality?: string | null; options?: string | null;
     will?: string | null; stage?: GrowthStage; progressNote?: string | null;
   }): Promise<GrowthGoal | null>;
   // 课题做成 → status=done（庆祝后用）；note 可写一句收尾进展。
-  complete(characterId: string, userId: string, id: string, note?: string | null): Promise<void>;
+  complete(personaName: string, userId: string, id: string, note?: string | null): Promise<void>;
   // 放下/不再做 → status=archived（可回溯，不硬删）。
-  archive(characterId: string, userId: string, id: string): Promise<void>;
+  archive(personaName: string, userId: string, id: string): Promise<void>;
   // 刷新「上次回顾时间」（本轮又聊到它了）。
-  touch(characterId: string, userId: string, id: string): Promise<void>;
+  touch(personaName: string, userId: string, id: string): Promise<void>;
 }

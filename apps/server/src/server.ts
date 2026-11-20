@@ -99,7 +99,7 @@ export async function main() {
             const fresh = await memory.listAll(p.name, userId, { since: prev });
             if (fresh.length === 0) continue;
           }
-          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, characterId: p.name });
+          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, personaName: p.name });
           lastDreamAt.set(p.name, new Date().toISOString());
           console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedProfile}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
         } catch (e) {

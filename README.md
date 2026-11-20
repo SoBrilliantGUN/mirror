@@ -101,7 +101,8 @@ mirror/
 │   │       ├── greetingCache.ts # 招呼语磁盘缓存（序列化 + 落盘）
 │   │       ├── vector.ts        # 向量工具（cosine，persona 与记忆巩固共用）
 │   │       └── brain/ store/ speech/ rtc/ llm/ persona/ obs/ scripts/
-│   │           └── brain/README.md  # 交接速查：L 层↔文件映射 + 情绪概念 5 连
+│   │           ├── brain/README.md   # 交接速查：L 层↔文件映射 + 情绪概念 5 连
+│   │           └── speech/README.md  # 交接速查：供应商名→职责（ASR / 哭·笑 / TTS）映射
 │   └── desktop/           # Electron 桌面版：内嵌 PG + 语音 + 英文模式 + 便携 exe
 ├── packages/
 │   └── contracts/         # 共享类型 + 接口契约（"缝"的物理位置）

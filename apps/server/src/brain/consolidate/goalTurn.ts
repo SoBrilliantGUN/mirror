@@ -33,6 +33,7 @@ export type GoalExtract = {
   archive: boolean;
 };
 
+// 只校验 LLM 输出的 stage（G/R/O/W）；'done' 不在此列——LLM 通过 done 布尔表达「做成」，由 consolidateGoal 调 store.complete() 落 stage='done'。
 const STAGES = new Set<GrowthStage>(['goal', 'reality', 'options', 'will']);
 
 // 纯函数：从模型输出里解析课题进展，非法/缺失回退空。可单测。
@@ -75,16 +76,16 @@ export async function consolidateGoal(deps: {
   model: string;
   store: GrowthGoalStore;
   userId: string;
-  characterId: string;
+  personaName: string;
   userText: string;
   agentText: string;
 }): Promise<{ updated: number }> {
-  const { llm, model, store, userId, characterId, userText, agentText } = deps;
+  const { llm, model, store, userId, personaName, userText, agentText } = deps;
   if (!userText.trim()) return { updated: 0 };
 
   let out: GoalExtract;
   try {
-    const existing = await store.listActive(characterId, userId);
+    const existing = await store.listActive(personaName, userId);
     const raw = await llm.chat(
       [
         { role: 'system', content: CONSOLIDATE_GOAL_SYSTEM_PROMPT },
@@ -107,7 +108,7 @@ export async function consolidateGoal(deps: {
   if (!out.title) return { updated: 0 }; // 这轮没有明确课题进展
 
   try {
-    const goal = await store.create(characterId, userId, { title: out.title });
+    const goal = await store.create(personaName, userId, { title: out.title });
     const stage = deriveStage(out);
     const patch: Parameters<GrowthGoalStore['update']>[3] = {};
     if (out.goal) patch.goal = out.goal;
@@ -116,16 +117,16 @@ export async function consolidateGoal(deps: {
     if (out.will) patch.will = out.will;
     if (stage) patch.stage = stage;
     if (Object.keys(patch).length > 0) {
-      await store.update(characterId, userId, goal.id, patch);
+      await store.update(personaName, userId, goal.id, patch);
     }
     if (out.done) {
-      await store.complete(characterId, userId, goal.id);
+      await store.complete(personaName, userId, goal.id);
       console.log(`[goal] 课题「${goal.title}」做成，庆祝收尾`);
     } else if (out.archive) {
-      await store.archive(characterId, userId, goal.id);
+      await store.archive(personaName, userId, goal.id);
       console.log(`[goal] 课题「${goal.title}」归档（对方放下）`);
     } else {
-      await store.touch(characterId, userId, goal.id); // 本轮又聊到它，刷新问责节奏
+      await store.touch(personaName, userId, goal.id); // 本轮又聊到它，刷新问责节奏
     }
     return { updated: 1 };
   } catch (e) {

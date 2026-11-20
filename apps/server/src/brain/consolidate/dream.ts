@@ -26,15 +26,15 @@ export async function dreamOnMemory(deps: {
   store: MemoryStore;
   embedder: Embedder;
   userId: string;
-  characterId: string;
+  personaName: string;
 }): Promise<DreamResult> {
-  const { llm, model, store, embedder, userId, characterId } = deps;
+  const { llm, model, store, embedder, userId, personaName } = deps;
 
   // ① 抽象升级
   let abstractedFacts = 0;
   let abstractedProfile = 0;
   try {
-    const r = await reflectOnMemory({ llm, model, store, userId, characterId });
+    const r = await reflectOnMemory({ llm, model, store, userId, personaName });
     abstractedFacts = r.factsWritten;
     abstractedProfile = r.profileWritten;
   } catch (e) {
@@ -45,7 +45,7 @@ export async function dreamOnMemory(deps: {
   let merged = 0;
   for (const kind of ['fact', 'preference', 'episodic', 'profile'] as MemoryKind[]) {
     try {
-      const list = await store.listAll(characterId, userId, { kind });
+      const list = await store.listAll(personaName, userId, { kind });
       if (list.length < 2) continue;
       const embs = await embedder.embed(list.map((m) => m.content));
       const ordered = list
@@ -54,7 +54,7 @@ export async function dreamOnMemory(deps: {
       for (let i = 0; i < ordered.length; i++) {
         for (let j = i + 1; j < ordered.length; j++) {
           if (cosine(ordered[i].emb, ordered[j].emb) >= MERGE_SIM) {
-            await store.remove(characterId, userId, ordered[j].m.id);
+            await store.remove(personaName, userId, ordered[j].m.id);
             merged++;
           }
         }
@@ -67,7 +67,7 @@ export async function dreamOnMemory(deps: {
   // ③ 清理矛盾（LLM）
   let resolved = 0;
   try {
-    resolved = await resolveContradictions({ llm, model, store, userId, characterId });
+    resolved = await resolveContradictions({ llm, model, store, userId, personaName });
   } catch (e) {
     console.warn('[dream] 清理矛盾失败：', e);
   }
@@ -80,12 +80,12 @@ async function resolveContradictions(deps: {
   model: string;
   store: MemoryStore;
   userId: string;
-  characterId: string;
+  personaName: string;
 }): Promise<number> {
-  const { llm, model, store, userId, characterId } = deps;
+  const { llm, model, store, userId, personaName } = deps;
   const all: { id: string; kind: MemoryKind; content: string }[] = [];
   for (const kind of ['fact', 'preference', 'profile'] as MemoryKind[]) {
-    const list = await store.listAll(characterId, userId, { kind });
+    const list = await store.listAll(personaName, userId, { kind });
     all.push(...list.map((m) => ({ id: m.id, kind: m.kind, content: m.content })));
   }
   if (all.length < 2) return 0;
@@ -105,7 +105,7 @@ async function resolveContradictions(deps: {
   for (const n of ids) {
     const target = all[n - 1];
     if (!target) continue;
-    await store.remove(characterId, userId, target.id);
+    await store.remove(personaName, userId, target.id);
     removed++;
   }
   return removed;

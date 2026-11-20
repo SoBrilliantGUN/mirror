@@ -1,7 +1,7 @@
 // 纯逻辑冒烟测试：evaluateDisinterest（换话题触发）。
 // 运行：npm test
 import { strict as assert } from 'node:assert';
-import { evaluateDisinterest, evaluatePerfunctory, AROUSAL_LOW, REPLY_SLOW_MS } from '../src/brain/interest';
+import { evaluateDisinterest, evaluatePerfunctory, AROUSAL_LOW, REPLY_SLOW_MS } from '../src/brain/topicSwitch';
 
 let passed = 0;
 function ok(name: string, fn: () => void) {

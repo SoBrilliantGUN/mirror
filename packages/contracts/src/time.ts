@@ -35,12 +35,17 @@ export type UpcomingDate = {
   inDays: number;       // 距今天数：0=今天，1=明天，≤windowDays=本周内
 };
 
+// —— 节假日表：'YYYY-MM-DD' → 条目（isOffDay: true=放假 / false=调休补班）。——
+// 数据由服务端 brain/holiday.ts 加载（缓存优先，miss 联网），这里只放类型，供 TimeAware 签名引用。
+export type HolidayEntry = { isOffDay: boolean; name: string };
+export type HolidayMap = Map<string, HolidayEntry>;
+
 // 时间感知接口：三层都只在通话内被动体现（不推送、不调度）。
 export interface TimeAware {
-  // A：当前时间上下文（纯函数，可单测）。
-  currentTimeContext(now: Date): TimeContext;
+  // A：当前时间上下文（纯函数，可单测）。holidays 缺省为空表（退化为「工作日=周一~周五」）。
+  currentTimeContext(now: Date, holidays?: HolidayMap): TimeContext;
   // B：临近/当天命中的时间锚点（窗口默认 7 天，含当天）。无则空数组。
-  upcomingDates(characterId: string, userId: string, now: Date, windowDays?: number): Promise<UpcomingDate[]>;
+  upcomingDates(personaName: string, userId: string, now: Date, windowDays?: number): Promise<UpcomingDate[]>;
   // C：作息关怀软信号——深夜/凌晨 + 记忆里对方有「晚睡/加班」痕迹时给一句候选，否则空串。
   scheduleCareHint(now: Date, recalled: RecalledMemories): string;
 }

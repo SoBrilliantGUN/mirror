@@ -77,7 +77,7 @@ function toMemory(r: MemoryRow): Memory {
   return {
     id: r.id,
     userId: r.user_id,
-    characterId: r.character_id,
+    personaName: r.character_id,
     kind: r.kind as MemoryKind,
     content: r.content,
     entityId: r.entity_id,
@@ -131,20 +131,20 @@ export function createMemoryStore(
   };
 
   // 语义检索（dense）：余弦相似度，返回 { id, score }（score = 1 - cosine distance）。
-  const denseSearch = async (characterId: string, userId: string, kind: MemoryKind, qvec: number[], topK: number): Promise<{ id: string; score: number }[]> => {
+  const denseSearch = async (personaName: string, userId: string, kind: MemoryKind, qvec: number[], topK: number): Promise<{ id: string; score: number }[]> => {
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
         WHERE character_id = $1 AND user_id = $2 AND kind = $4 AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT $5`,
-      [characterId, userId, toVectorLiteral(qvec), kind, topK],
+      [personaName, userId, toVectorLiteral(qvec), kind, topK],
     );
     return rows;
   };
 
   // 词法检索（lexical）：pg_trgm word_similarity（中文按字符 trigram 工作）。
-  const lexicalSearch = async (characterId: string, userId: string, kind: MemoryKind, query: string, topK: number): Promise<{ id: string; score: number }[]> => {
+  const lexicalSearch = async (personaName: string, userId: string, kind: MemoryKind, query: string, topK: number): Promise<{ id: string; score: number }[]> => {
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, word_similarity($3, content) AS score
          FROM memories
@@ -152,7 +152,7 @@ export function createMemoryStore(
           AND word_similarity($3, content) > 0.1
         ORDER BY score DESC
         LIMIT $5`,
-      [characterId, userId, query, kind, topK],
+      [personaName, userId, query, kind, topK],
     );
     return rows;
   };
@@ -165,10 +165,10 @@ export function createMemoryStore(
   };
 
   // 单型混合召回：dense + lexical RRF 融合后取 top-k，回写访问计数（检索强化）。
-  const hybridRecall = async (characterId: string, userId: string, kind: MemoryKind, query: string, qvec: number[]): Promise<Memory[]> => {
+  const hybridRecall = async (personaName: string, userId: string, kind: MemoryKind, query: string, qvec: number[]): Promise<Memory[]> => {
     const [dense, lexical] = await Promise.all([
-      denseSearch(characterId, userId, kind, qvec, recallTopK),
-      lexicalSearch(characterId, userId, kind, query, recallTopK),
+      denseSearch(personaName, userId, kind, qvec, recallTopK),
+      lexicalSearch(personaName, userId, kind, query, recallTopK),
     ]);
     const fused = rrfFuse([
       dense.map((d) => ({ item: d.id, score: d.score })),
@@ -187,68 +187,68 @@ export function createMemoryStore(
       .filter((m) => aboveFloor(m, now));
   };
 
-  const listActive = async (characterId: string, userId: string, kind: MemoryKind): Promise<Memory[]> => {
+  const listActive = async (personaName: string, userId: string, kind: MemoryKind): Promise<Memory[]> => {
     const { rows } = await pool.query<MemoryRow>(
       `SELECT * FROM memories WHERE character_id = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
-      [characterId, userId, kind],
+      [personaName, userId, kind],
     );
     const now = new Date();
     return rows.map(toMemory).filter((m) => aboveFloor(m, now));
   };
 
   // 带时间锚点的活跃记忆（时间感知 upcomingDates 用；数量小，周期评估在 TS 侧 timeAware）。
-  const listAnchored = async (characterId: string, userId: string): Promise<Memory[]> => {
+  const listAnchored = async (personaName: string, userId: string): Promise<Memory[]> => {
     const { rows } = await pool.query<MemoryRow>(
       `SELECT * FROM memories WHERE character_id = $1 AND user_id = $2 AND anchor_kind IS NOT NULL AND ${ACTIVE}`,
-      [characterId, userId],
+      [personaName, userId],
     );
     const now = new Date();
     return rows.map(toMemory).filter((m) => aboveFloor(m, now));
   };
 
   // 好奇心覆盖率：按 dimension + aspect 数活跃事实（fact/preference/episodic），缺口检测用。
-  const getCoverage = async (characterId: string, userId: string): Promise<{ dimension: string; aspect: string | null; count: number }[]> => {
+  const getCoverage = async (personaName: string, userId: string): Promise<{ dimension: string; aspect: string | null; count: number }[]> => {
     const { rows } = await pool.query<{ dimension: string; aspect: string | null; count: number }>(
       `SELECT dimension, aspect, COUNT(*)::int AS count FROM memories
         WHERE character_id = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
           AND dimension IS NOT NULL AND dimension <> '' AND ${ACTIVE}
         GROUP BY dimension, aspect`,
-      [characterId, userId],
+      [personaName, userId],
     );
     return rows;
   };
 
   // 撤销错误记忆：对方纠正了之前听错/记错的事实（如「全栈」被听成「签证」）。
   // 把含该关键词的活跃 fact/preference/episodic 归档（superseded，不硬删）。关键词太短（<2 字）跳过，防误删。
-  const retract = async (characterId: string, userId: string, keyword: string): Promise<number> => {
+  const retract = async (personaName: string, userId: string, keyword: string): Promise<number> => {
     const kw = (keyword ?? '').trim();
     if (kw.length < 2) return 0;
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
         WHERE character_id = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
           AND NOT superseded AND content LIKE '%' || $3 || '%'`,
-      [characterId, userId, kw],
+      [personaName, userId, kw],
     );
     return rowCount ?? 0;
   };
 
   // 按 id 精确撤销（superseded）——纠正「上一轮刚写入」的记忆时用，不做关键词模糊匹配。
-  const retractById = async (characterId: string, userId: string, id: string): Promise<number> => {
+  const retractById = async (personaName: string, userId: string, id: string): Promise<number> => {
     if (!id) return 0;
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
         WHERE id = $1 AND character_id = $2 AND user_id = $3
           AND kind IN ('fact','preference','episodic') AND NOT superseded`,
-      [id, characterId, userId],
+      [id, personaName, userId],
     );
     return rowCount ?? 0;
   };
 
   // 上限裁剪：某型活跃记忆超过 keep 条时，把最旧的归档（superseded，不硬删，可审计）。返回归档条数。
-  const prune = async (characterId: string, userId: string, kind: MemoryKind, keep: number): Promise<number> => {
+  const prune = async (personaName: string, userId: string, kind: MemoryKind, keep: number): Promise<number> => {
     const { rows } = await pool.query<{ id: string }>(
       `SELECT id FROM memories WHERE character_id = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
-      [characterId, userId, kind],
+      [personaName, userId, kind],
     );
     const excess = rows.slice(0, Math.max(0, rows.length - keep));
     if (excess.length === 0) return 0;
@@ -263,7 +263,7 @@ export function createMemoryStore(
   // emb 为空时只按 content 精确查重；有 emb 时再按余弦相似度近义查重（复用 write 里已算好的向量）。
   // 命中返回已存在的活跃条，否则 null。
   const findDuplicateProfile = async (
-    characterId: string,
+    personaName: string,
     userId: string,
     content: string,
     emb: number[] | null,
@@ -273,7 +273,7 @@ export function createMemoryStore(
         `SELECT * FROM memories
           WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND content = $3 AND ${ACTIVE}
           LIMIT 1`,
-        [characterId, userId, content],
+        [personaName, userId, content],
       );
       return rows[0] ? toMemory(rows[0]) : null;
     }
@@ -283,7 +283,7 @@ export function createMemoryStore(
         WHERE character_id = $1 AND user_id = $2 AND kind = 'profile' AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT 1`,
-      [characterId, userId, toVectorLiteral(emb)],
+      [personaName, userId, toVectorLiteral(emb)],
     );
     if (rows[0] && rows[0].score >= PROFILE_DUP_SIM) {
       return getById(rows[0].id);
@@ -294,12 +294,12 @@ export function createMemoryStore(
   // 笔记本/记忆库：跨型列出未归档记忆（可选 kind 过滤、since 起点），按创建时间倒序。
   // 不做 episodic 软激活过滤——管理面板要看到全部（含"软遗忘"的），让用户能手动清理。
   const listAll = async (
-    characterId: string,
+    personaName: string,
     userId: string,
     opts: { kind?: MemoryKind; since?: string } = {},
   ): Promise<Memory[]> => {
     const conds = [`character_id = $1`, `user_id = $2`, ACTIVE];
-    const params: unknown[] = [characterId, userId];
+    const params: unknown[] = [personaName, userId];
     if (opts.kind) {
       params.push(opts.kind);
       conds.push(`kind = $${params.length}`);
@@ -317,13 +317,13 @@ export function createMemoryStore(
 
   // 笔记本编辑：就地改 content / kind（同 id，不新建）。找不到（或不属于该用户/人物）返回 null。
   const updateMemory = async (
-    characterId: string,
+    personaName: string,
     userId: string,
     id: string,
     patch: { content?: string; kind?: MemoryKind },
   ): Promise<Memory | null> => {
     const sets: string[] = [];
-    const params: unknown[] = [id, characterId, userId];
+    const params: unknown[] = [id, personaName, userId];
     if (patch.content !== undefined) {
       params.push(patch.content);
       sets.push(`content = $${params.length}`);
@@ -341,45 +341,45 @@ export function createMemoryStore(
   };
 
   // 笔记本删除：软删除（superseded，可审计不硬删）。返回归档条数（0 = 不存在或已删）。
-  const removeMemory = async (characterId: string, userId: string, id: string): Promise<number> => {
+  const removeMemory = async (personaName: string, userId: string, id: string): Promise<number> => {
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
         WHERE id = $1 AND character_id = $2 AND user_id = $3 AND NOT superseded`,
-      [id, characterId, userId],
+      [id, personaName, userId],
     );
     return rowCount ?? 0;
   };
 
   return {
-    async recall(characterId, userId, query): Promise<RecalledMemories> {
+    async recall(personaName, userId, query): Promise<RecalledMemories> {
       const qvec = (await embedder.embed([query]))[0];
       const [constraint, profile, preference, fact, episodic] = await Promise.all([
-        listActive(characterId, userId, 'constraint'),
-        listActive(characterId, userId, 'profile'), // profile 强制在场：全量召回（不走向量，像 constraint）
-        hybridRecall(characterId, userId, 'preference', query, qvec),
-        hybridRecall(characterId, userId, 'fact', query, qvec),
-        hybridRecall(characterId, userId, 'episodic', query, qvec),
+        listActive(personaName, userId, 'constraint'),
+        listActive(personaName, userId, 'profile'), // profile 强制在场：全量召回（不走向量，像 constraint）
+        hybridRecall(personaName, userId, 'preference', query, qvec),
+        hybridRecall(personaName, userId, 'fact', query, qvec),
+        hybridRecall(personaName, userId, 'episodic', query, qvec),
       ]);
       return { constraint, fact, preference, episodic, profile };
     },
 
-    async search(characterId, userId, query, kind, topK = recallTopK): Promise<Memory[]> {
+    async search(personaName, userId, query, kind, topK = recallTopK): Promise<Memory[]> {
       const qvec = (await embedder.embed([query]))[0];
       const kinds: MemoryKind[] = kind ? [kind] : ['fact', 'episodic'];
-      const hits = (await Promise.all(kinds.map((k) => hybridRecall(characterId, userId, k, query, qvec)))).flat();
+      const hits = (await Promise.all(kinds.map((k) => hybridRecall(personaName, userId, k, query, qvec)))).flat();
       return hits.slice(0, topK);
     },
 
-    async write(characterId, userId, { kind, content, entityId = null, dimension = null, aspect = null, anchor = null }): Promise<Memory> {
+    async write(personaName, userId, { kind, content, entityId = null, dimension = null, aspect = null, anchor = null }): Promise<Memory> {
       // profile 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
       if (kind === 'profile') {
-        const dup = await findDuplicateProfile(characterId, userId, content, null);
+        const dup = await findDuplicateProfile(personaName, userId, content, null);
         if (dup) return dup;
       }
       const [emb] = await embedder.embed([content]);
       // profile 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的人设/洞察重复入库。
       if (kind === 'profile') {
-        const dup = await findDuplicateProfile(characterId, userId, content, emb);
+        const dup = await findDuplicateProfile(personaName, userId, content, emb);
         if (dup) return dup;
       }
       const id = randomUUID();
@@ -392,7 +392,7 @@ export function createMemoryStore(
           `SELECT id, version FROM memories
             WHERE character_id = $1 AND user_id = $2 AND kind = 'fact' AND entity_id = $3 AND ${ACTIVE}
             ORDER BY version DESC`,
-          [characterId, userId, entityId],
+          [personaName, userId, entityId],
         );
         for (const r of rows) {
           await pool.query(
@@ -409,7 +409,7 @@ export function createMemoryStore(
       await pool.query(
         `INSERT INTO memories (id, character_id, user_id, kind, content, entity_id, dimension, aspect, anchor_kind, anchor_at, anchor_rule, embedding, ttl_days, version)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::vector, $13, $14)`,
-        [id, characterId, userId, kind, content, entityId, dimension, aspect, anchorKind, anchorAt, anchorRule ? JSON.stringify(anchorRule) : null, toVectorLiteral(emb), ttlDays, version],
+        [id, personaName, userId, kind, content, entityId, dimension, aspect, anchorKind, anchorAt, anchorRule ? JSON.stringify(anchorRule) : null, toVectorLiteral(emb), ttlDays, version],
       );
       return getById(id);
     },

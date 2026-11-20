@@ -18,16 +18,16 @@ async function main() {
     ? [process.argv[2]]
     : Object.values(PERSONAS).filter((p) => p.available).map((p) => p.name);
 
-  for (const characterId of targets) {
+  for (const personaName of targets) {
     const { rows } = await pool.query<{
       id: string; kind: string; content: string; created_at: Date; anchor_kind: string | null;
     }>(
       `SELECT id, kind, content, created_at, anchor_kind
          FROM memories WHERE character_id = $1 AND user_id = $2 AND NOT superseded`,
-      [characterId, userId],
+      [personaName, userId],
     );
     if (rows.length === 0) {
-      console.log(`[${characterId}] 无活跃记忆，跳过\n`);
+      console.log(`[${personaName}] 无活跃记忆，跳过\n`);
       continue;
     }
 
@@ -58,7 +58,7 @@ async function main() {
         console.log(`  [rewrite] ${r.kind}：${r.content}\n            → ${newContent}`);
       }
     }
-    console.log(`[${characterId}] 回填锚点 ${anchored} 条，改写相对词 ${rewritten} 条\n`);
+    console.log(`[${personaName}] 回填锚点 ${anchored} 条，改写相对词 ${rewritten} 条\n`);
   }
 
   await pool.end();

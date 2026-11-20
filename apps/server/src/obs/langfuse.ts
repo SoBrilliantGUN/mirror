@@ -9,7 +9,7 @@ import { Langfuse, type LangfuseTraceClient } from 'langfuse';
 import type { DeepSeek, ChatMessage, Tool, ChatOptions, StreamEvent } from '../llm/deepseek';
 import type { Embedder } from '../llm/embedding';
 
-export type ObsSession = { sessionId: string; userId: string; characterId: string };
+export type ObsSession = { sessionId: string; userId: string; personaName: string };
 
 export type EventLevel = 'DEBUG' | 'DEFAULT' | 'WARNING' | 'ERROR';
 
@@ -81,10 +81,10 @@ function realObs(cfg: { publicKey: string; secretKey: string; baseUrl: string })
         trace = langfuse.trace({
           name,
           input: opts?.input,
-          metadata: { ...(opts?.metadata ?? {}), characterId: session?.characterId ?? null },
+          metadata: { ...(opts?.metadata ?? {}), personaName: session?.personaName ?? null },
           sessionId: session?.sessionId ?? null,
           userId: session?.userId ?? null,
-          tags: session ? [session.characterId] : undefined,
+          tags: session ? [session.personaName] : undefined,
         });
       } catch (e) {
         console.warn('[obs] 创建 trace 失败，本轮不埋点：', err(e));

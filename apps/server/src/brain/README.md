@@ -4,7 +4,7 @@
 
 | L 层 | 含义 | 文件 |
 |---|---|---|
-| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`mood.ts`（心境 EMA）、`coach.ts`（教练意图+Frame 状态机）、`modeTracker.ts`（mode 防抖） |
+| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`mood.ts`（心境 EMA）、`coach.ts`（教练意图+Frame 状态机）、`modeTracker.ts`（mode 防抖） |
 | L4 | 安全红线 | `safety.ts`（危机+过度依赖，独立小模型）、`crisisResources.ts`（热线资源） |
 | L5 | 状态 / 会话 / 记忆 | `modeTracker.ts`、`mood.ts`、`compress.ts`（历史压缩）、`recentSummary.ts`（跨通话概要）、`timeAnchor.ts`/`timeAware.ts`/`holiday.ts`/`timezone.ts`（时间感知）、`ontology.ts`（好奇心维度） |
 | 记忆「写」 | 后台巩固（不进热路径） | `consolidate/`（memoryTurn / goalTurn / selfAddTurn / dream / reflect / afterTurn） |

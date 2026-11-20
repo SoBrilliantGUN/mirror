@@ -58,15 +58,14 @@ import { createPersonaMatcher } from './persona/loadPersona';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { planTurn } from './brain/turn';
-import { evaluateDisinterest, evaluatePerfunctory } from './brain/interest';
+import { evaluateDisinterest, evaluatePerfunctory } from './brain/topicSwitch';
 import { SEARCH_TOOL, pickFiller } from './brain/search';
 import { bochaSearch } from './search/bocha';
 import { streamMessages, streamMessagesWithTools, generateProactiveText, extractAwaits } from './brain/generate';
-import { recallContext, buildTurnMessages } from './brain/assemble';
-import { createPrefetchCache } from './brain/consolidate/memoryTurn';
+import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/assemble';
 import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
 import { classifyMemory } from './brain/memoryClassifier';
-import { GenerationGate } from './brain/generation';
+import { GenerationGate } from './brain/generationGate';
 import { classifySegmentEmotion } from './brain/segmentEmotion';
 import { compressHistory } from './brain/compress';
 import { summarizeCall, compressSummaries } from './brain/recentSummary';
@@ -399,7 +398,7 @@ export class CallSession {
     // 通话会话记录：结束上一通（若有残留），开新一条；失败不阻断建连。
     if (this.currentSessionId) this.sessions.end(this.currentSessionId).catch(() => {});
     this.currentSessionId = await this.sessions.start(this.persona.name, this.userId).catch(() => null);
-    this.obs.setSession(this.currentSessionId ? { sessionId: this.currentSessionId, userId: this.userId, characterId: this.persona.name } : null);
+    this.obs.setSession(this.currentSessionId ? { sessionId: this.currentSessionId, userId: this.userId, personaName: this.persona.name } : null);
 
     this.rtc = createRtcPeer(
       {
@@ -539,7 +538,7 @@ export class CallSession {
     this.speaking = true;
     let reachedEnd = false;
     await this.obs.trace('turn', {
-      metadata: { kind: 'respond', characterId: this.persona.name, turnIndex: this.turnCount, dominantVocal },
+      metadata: { kind: 'respond', personaName: this.persona.name, turnIndex: this.turnCount, dominantVocal },
       input: { text: userText, vocals, dominantVocal },
     }, async () => {
     try {
@@ -558,7 +557,7 @@ export class CallSession {
     const assembleDeps = {
       store: this.memory,
       userId: this.userId,
-      characterId: this.persona.name,
+      personaName: this.persona.name,
       memoryBudget: this.memoryBudget,
       compress: (entries: HistoryEntry[]) => compressHistory(entries, this.historyBudget, this.summarizer),
       timeAware: this.timeAware,
@@ -818,7 +817,7 @@ export class CallSession {
         embedder: this.embedder,
         classify: (raw) => classifyMemory(this.llm, this.cfg.generateModel, raw),
         userId: this.userId,
-        characterId: this.persona.name,
+        personaName: this.persona.name,
         userText,
         agentText: fullText.trim(),
         personaSystemPrompt: this.persona.systemPrompt,
@@ -850,7 +849,7 @@ export class CallSession {
     let reachedEnd = false;
     console.log('[proactive] 开始：', kind);
     await this.obs.trace('proactive', {
-      metadata: { kind, characterId: this.persona.name },
+      metadata: { kind, personaName: this.persona.name },
       input: { kind },
     }, async () => {
     try {
@@ -941,7 +940,7 @@ export class CallSession {
       if (this.lastUserTurn === turn && !this.speaking && this.rtc) {
         this.reanswerCount++;
         console.log('[respond] 误打断后重答（第', this.reanswerCount, '次）：', turn.text);
-        void this.obs.trace('reanswer', { metadata: { attempt: this.reanswerCount, characterId: this.persona.name } }, async () => {});
+        void this.obs.trace('reanswer', { metadata: { attempt: this.reanswerCount, personaName: this.persona.name } }, async () => {});
         this.respond(turn.text, turn.vocals, turn.dominantVocal).catch(console.error);
       }
     }, REANSWER_MS);
@@ -1024,7 +1023,7 @@ export class CallSession {
 
   private doBargeIn(source: 'rtc' | 'asr') {
     console.log(`[RTC] 打断（interrupt，via ${source}）`);
-    void this.obs.trace('interrupt', { metadata: { characterId: this.persona.name, source } }, async () => {});
+    void this.obs.trace('interrupt', { metadata: { personaName: this.persona.name, source } }, async () => {});
     this.lastBargeInAt = Date.now();
     this.gate.invalidate();
     this.rtc?.clear();
@@ -1088,7 +1087,7 @@ export class CallSession {
     if (this.currentSessionId) {
       const id = this.currentSessionId;
       this.currentSessionId = null;
-      void this.obs.trace('hangup', { metadata: { reason, characterId: this.persona.name } }, async () => {});
+      void this.obs.trace('hangup', { metadata: { reason, personaName: this.persona.name } }, async () => {});
       this.obs.setSession(null);
       this.sessions.end(id).catch(() => {});
     }

@@ -29,16 +29,16 @@ export async function reflectOnMemory(deps: {
   model: string;
   store: MemoryStore;
   userId: string;
-  characterId: string;
+  personaName: string;
   maxProfile?: number;
 }): Promise<{ factsWritten: number; profileWritten: number }> {
-  const { llm, model, store, userId, characterId, maxProfile = 20 } = deps;
+  const { llm, model, store, userId, personaName, maxProfile = 20 } = deps;
 
   // 只拿最近一段（情节/事实各 50 条足够），人设已控量全取。
-  const episodic = (await store.listActive(characterId, userId, 'episodic')).slice(-50);
+  const episodic = (await store.listActive(personaName, userId, 'episodic')).slice(-50);
   if (episodic.length === 0) return { factsWritten: 0, profileWritten: 0 };
-  const facts = (await store.listActive(characterId, userId, 'fact')).slice(-50);
-  const profile = await store.listActive(characterId, userId, 'profile');
+  const facts = (await store.listActive(personaName, userId, 'fact')).slice(-50);
+  const profile = await store.listActive(personaName, userId, 'profile');
 
   const userPrompt = [
     '【已有情节记忆】' + (episodic.map((m) => m.content).join('\n') || '（无）'),
@@ -66,7 +66,7 @@ export async function reflectOnMemory(deps: {
     const content = (f.content ?? '').trim();
     if (!content) continue;
     try {
-      await store.write(characterId, userId, { kind: 'fact', content, entityId: f.entityId?.trim() || null });
+      await store.write(personaName, userId, { kind: 'fact', content, entityId: f.entityId?.trim() || null });
       factsWritten++;
     } catch (e) {
       console.warn('[reflect] 写 fact 失败：', e);
@@ -78,7 +78,7 @@ export async function reflectOnMemory(deps: {
     const content = (s ?? '').trim();
     if (!content) continue;
     try {
-      await store.write(characterId, userId, { kind: 'profile', content });
+      await store.write(personaName, userId, { kind: 'profile', content });
       profileWritten++;
     } catch (e) {
       console.warn('[reflect] 写 profile 失败：', e);
@@ -88,7 +88,7 @@ export async function reflectOnMemory(deps: {
   // 硬上限：人设强制在场，必须控量，超了归档最旧（不硬删，可审计）。
   if (profileWritten > 0) {
     try {
-      await store.prune(characterId, userId, 'profile', maxProfile);
+      await store.prune(personaName, userId, 'profile', maxProfile);
     } catch (e) {
       console.warn('[reflect] 裁剪 profile 失败：', e);
     }

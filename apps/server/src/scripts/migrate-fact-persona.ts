@@ -54,17 +54,17 @@ async function main() {
     ? [process.argv[2]]
     : Object.values(PERSONAS).filter((p) => p.available).map((p) => p.name);
 
-  for (const characterId of targets) {
+  for (const personaName of targets) {
     const snapshot = async (label: string) => {
       const counts: Record<string, number> = {};
-      for (const k of KINDS) counts[k] = (await memory.listAll(characterId, userId, { kind: k })).length;
-      console.log(`[${characterId}][${label}] 活跃条数 = ${JSON.stringify(counts)}`);
+      for (const k of KINDS) counts[k] = (await memory.listAll(personaName, userId, { kind: k })).length;
+      console.log(`[${personaName}][${label}] 活跃条数 = ${JSON.stringify(counts)}`);
     };
 
     await snapshot('BEFORE');
-    const facts = await memory.listAll(characterId, userId, { kind: 'fact' });
+    const facts = await memory.listAll(personaName, userId, { kind: 'fact' });
     if (facts.length === 0) {
-      console.log(`[${characterId}] 无 fact，跳过\n`);
+      console.log(`[${personaName}] 无 fact，跳过\n`);
       continue;
     }
 
@@ -84,19 +84,19 @@ async function main() {
       if (!f) continue;
       try {
         // write(kind='persona') 自带近义去重（0.9）：命中已有 persona 就并入、不新建；再归档旧 fact。
-        await memory.write(characterId, userId, { kind: 'profile', content: f.content });
-        await memory.remove(characterId, userId, f.id);
+        await memory.write(personaName, userId, { kind: 'profile', content: f.content });
+        await memory.remove(personaName, userId, f.id);
         moved++;
         console.log(`  [move] fact → persona：${f.content}`);
       } catch (e) {
         console.warn(`  [move][失败] ${f.content}：`, e);
       }
     }
-    console.log(`[${characterId}] fact→persona 迁移 ${moved} 条（判定 ${toMoveIdx.size} 条）`);
+    console.log(`[${personaName}] fact→persona 迁移 ${moved} 条（判定 ${toMoveIdx.size} 条）`);
 
     // 2) 做梦巩固：合并近重复 + 清矛盾 + 抽象升级（复用 dreamOnMemory，阈值已调 0.9）
-    const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, characterId });
-    console.log(`[${characterId}][dream] 抽象 fact=${r.abstractedFacts} profile=${r.abstractedProfile} | 合并=${r.merged} | 清矛盾=${r.resolved}`);
+    const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, personaName });
+    console.log(`[${personaName}][dream] 抽象 fact=${r.abstractedFacts} profile=${r.abstractedProfile} | 合并=${r.merged} | 清矛盾=${r.resolved}`);
 
     await snapshot('AFTER');
     console.log('');
