@@ -1,28 +1,22 @@
 import type {
-  Affect,
   CoverageEntry,
   DependenceAction,
-  EmotionTag,
   Frame,
   GrowthGoal,
   GrowthGoalStore,
   Memory,
   MemoryStore,
-  Mode,
-  MoodState,
   RecalledMemories,
   SafetyAction,
   SelfAdded,
   SelfAddedStore,
-  Stance,
   TimeAware,
   TimeContext,
   UpcomingDate,
-  VocalizationEvent,
 } from '@mirror/contracts';
 import type { ChatMessage } from '../llm/deepseek';
 import { formatPersonaBlock, type PersonaDetail } from '../persona/loadPersona';
-import { buildGoalFollowUpHint, buildLayeredUserPrompt, formatGoalBlock, formatSelfAddedBlock, formatTimeBlock, type HistoryEntry } from './context';
+import { buildGoalFollowUpHint, buildLayeredUserPrompt, formatGoalBlock, formatSelfAddedBlock, formatTimeBlock, type HistoryEntry, type TurnPromptSignals } from './context';
 import { buildGenerateSystemPrompt } from './prompts';
 import { buildCuriosityHint } from './ontology';
 import { formatCrisisResources } from './crisisResources';
@@ -75,30 +69,13 @@ export type AssembleDeps = {
   prefetchCache?: PrefetchCache;
 };
 
-export type AssembleInput = {
-  text: string;
-  mode: Mode;
-  stance: Stance;
-  emotion: EmotionTag;
-  mood: MoodState | null;
-  turnCount: number;
+export type AssembleInput = TurnPromptSignals & {
   personaSystemPrompt: string;
-  vocalizations?: VocalizationEvent[];
-  affect?: Affect; // 她这一轮瞬时情感（追问高唤醒点用）
-  userGender?: '男' | '女' | null; // 从语音检测出的对方性别（注入 [STATE] 供人称「他/她」）
-  switchTopic?: boolean; // 连续几轮不感兴趣 → 注入 [TOPIC] 换话题块
   frame?: Frame;                 // 交互框架：coach 时注入 GROW 块
   coachInvite?: boolean;         // 主动察觉累计命中 → 注入温柔邀入块
   celebrate?: boolean;           // 刚解决退出教练 → 注入庆祝块
-  goalFollowUp?: string;         // [FOLLOW_UP] 主动追问（预格式化好，空则省略）
   safetyAction?: SafetyAction;   // 危机（refer 时注入确定性资源块）
   dependence?: DependenceAction; // 过度依赖（boundary 时注入设界块）
-  farewell?: boolean; // 对方这一轮在道别 → 注入 [FAREWELL] 块
-  lastAskedQuestion?: string; // 上一轮问句原文（若上一轮以问句结尾）→ 注入 [ANSWERED] 防重复问
-  userSaid?: string[]; // 会话小笔记本：对方本次已回答过的话 → 注入 [SAID] 防重复问/矛盾
-  recentAsked?: string[]; // 近 3 天已问过的问题（跨通话）→ 注入 [ASKED] 防重复问
-  recentSummary?: string; // 最近 3 天对话概要（跨通话）→ 注入 [RECENT] 块（空则省略）
-  curiosityHint?: string; // 预格式化好的 [CURIOSITY] 块（server 侧缓存/复用；不传则这里现算）
   searchEnabled?: boolean; // 配了联网搜索 key → 注入 search_web 工具使用规则
 };
 
@@ -246,32 +223,19 @@ export function buildTurnMessages(ctx: RecalledContext, memoryBudget: number, in
     }
   }
 
+  // 决策信号（TurnPromptSignals）整体透传；装配器独有字段（召回/格式化产物）在这里补齐。
+  // AssembleInput 多出的 personaSystemPrompt/frame/… 是给 system prompt 用的，spread 进 user prompt 无碍。
   const baseUser = buildLayeredUserPrompt({
-    mode: input.mode,
-    stance: input.stance,
-    emotion: input.emotion,
-    mood: input.mood,
-    turnCount: input.turnCount,
-    affect: input.affect,
-    userGender: input.userGender,
-    switchTopic: input.switchTopic,
-    farewell: input.farewell,
-    lastAskedQuestion: input.lastAskedQuestion,
-    userSaid: input.userSaid,
-    recentAsked: input.recentAsked,
-    recentSummary: input.recentSummary,
+    ...input,
     curiosityHint: input.frame === 'coach' ? undefined : (input.curiosityHint ?? buildCuriosityHint(ctx.coverage)),
     timeBlock: formatTimeBlock(ctx.time.timeContext, ctx.time.upcoming, ctx.time.careHint),
     goalBlock: formatGoalBlock(ctx.goals),
-    goalFollowUp: input.goalFollowUp,
     safetyBlock: input.safetyAction?.action === 'refer' ? formatCrisisResources() : undefined,
     memories: ctx.recalled,
     memoryBudget,
     history: summaries,
     personaBlock: ctx.personaBlock,
     selfAddedBlock: formatSelfAddedBlock(ctx.selfAdded),
-    text: input.text,
-    vocalizations: input.vocalizations,
   });
   messages.push({ role: 'user', content: baseUser });
   return messages;

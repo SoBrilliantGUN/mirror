@@ -197,32 +197,38 @@ export function formatHistory(history: HistoryEntry[]): string {
 //   [ASKED]            ← recentAsked
 //   [ANSWERED]         ← lastAskedQuestion
 //   【对方这一轮】       ← text + vocalizations
-export type LayeredPromptInput = {
+// 决策阶段的「信号」与装配阶段的「格式化产物」分界线：
+// TurnPromptSignals = plan 那批标量（mode/stance/emotion/…）+ 会话级小状态，context 与 assemble 共用，
+// 避免两个 20 字段的大参数包各写一份。两个装配器都 extends 它。
+export type TurnPromptSignals = {
   mode: Mode;
   stance: Stance;
   emotion: EmotionTag;
   mood: MoodState | null;
   turnCount: number;
+  text: string;
   affect?: Affect; // 对方这一轮瞬时情感（追问高唤醒点用）
   userGender?: '男' | '女' | null; // 从语音检测出的对方性别（注入 [STATE] 供人称「他/她」）
-  curiosityHint?: string; // 好奇心线索（预格式化好的 [CURIOSITY] 块），注入当软信号
+  vocalizations?: VocalizationEvent[];
   switchTopic?: boolean; // 对方连续几轮不感兴趣 → 注入 [TOPIC] 块，主动换话题
   lastAskedQuestion?: string; // 上一轮陪伴者问句原文（若上一轮以问句结尾）→ 注入 [ANSWERED]，禁止重复问已答问题
   userSaid?: string[]; // 会话小笔记本：对方本次已回答过的话 → 注入 [SAID]，禁止重复问/矛盾
   recentAsked?: string[]; // 近 3 天已问过的问题（跨通话）→ 注入 [ASKED]，禁止重复问
   recentSummary?: string; // 最近 3 天对话概要（跨通话）→ 注入 [RECENT]，让陪伴者自然接上最近话题
   farewell?: boolean; // 对方这一轮在道别 → 注入 [FAREWELL] 块，回一句道别收尾、不再追问/开新话题
+  curiosityHint?: string; // 好奇心线索（预格式化好的 [CURIOSITY] 块），注入当软信号
+  goalFollowUp?: string; // [FOLLOW_UP] 主动追问（新通话首轮、每通一次，空则省略）
+};
+
+export type LayeredPromptInput = TurnPromptSignals & {
   timeBlock?: string; // 时间感知块（预格式化好的 [TIME] 块），空则省略
   goalBlock?: string; // [GOAL] 成长课题块（预格式化好，空则省略）
-  goalFollowUp?: string; // [FOLLOW_UP] 主动追问（新通话首轮、每通一次，空则省略）
   safetyBlock?: string; // [CRISIS_RESOURCES] 危机资源块（refer 时确定性注入，保证号码必现）
   memories: RecalledMemories;
   memoryBudget: number;
   history: HistoryEntry[]; // 已经过压缩的 L5（多轮改造后只剩摘要；逐字 turn 走原生消息）
   personaBlock?: string; // [PERSONA] 人物命中详情块（渐进式加载，空则省略）
   selfAddedBlock?: string; // [SELF_ADDED] 人设增补块（永久固化 + 强制一致，空则省略）
-  text: string;
-  vocalizations?: VocalizationEvent[];
 };
 
 export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
