@@ -177,42 +177,41 @@ export class TurnTakingController {
       }, wait);
       return;
     }
-    if (this.lastTurnAskedQuestion && this.noReplyStreak < this.timing.noReplyLimit) {
-      const wait = Math.max(0, this.timing.followupMs - (Date.now() - this.lastUserVoiceAt));
-      this.idleTimer = setTimeout(() => {
-        this.idleTimer = null;
-        if (!this.host.rtc || this.host.speaking) return;
-        if (Date.now() - this.lastUserVoiceAt >= this.timing.followupMs) {
-          this.noReplyStreak++;
-          if (this.noReplyStreak >= this.timing.noReplyLimit) {
-            this.idleFired = true;
-            console.log('[proactive] 触发 farewell（多次没回应）');
-            this.host.speakProactive('farewell').catch(console.error);
-          } else if (this.noReplyStreak === 2) {
-            console.log('[proactive] 触发 checkin（先问还在吗）');
-            this.host.speakProactive('checkin').catch(console.error);
-          } else {
-            console.log('[proactive] 触发 followup（追问自答）');
-            this.host.speakProactive('followup').catch(console.error);
-          }
-        } else {
-          this.armIdleCheck();
-        }
-      }, wait);
-      return;
-    }
+    // 招呼语刚播完 / 已经收尾：别再主动发话，等用户开口。
     if (this.idleFired) return;
-    const nudgeMs = nudgeDelayMs(this.host.mood, this.host.lastAffect?.incongruence ?? false);
-    const wait = Math.max(0, nudgeMs - (Date.now() - this.lastUserVoiceAt));
+    // 已经 farewell 收尾过：不再发。
+    if (this.noReplyStreak >= this.timing.noReplyLimit) return;
+
+    // 静默后逐级主动发话（统一阶梯，不再区分「问句/非问句」两套逻辑）：
+    //   第 1 次：问句 → followup（追问自答）；非问句 → nudge（找话题，按情绪给空间）
+    //   第 2 次：checkin（还在吗）
+    //   第 3 次：farewell（收尾）
+    const firstWait = this.lastTurnAskedQuestion
+      ? this.timing.followupMs
+      : nudgeDelayMs(this.host.mood, this.host.lastAffect?.incongruence ?? false);
+    const target = this.noReplyStreak === 0 ? firstWait : this.timing.followupMs;
+    const wait = Math.max(0, target - (Date.now() - this.lastUserVoiceAt));
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (!this.host.rtc || this.host.speaking || this.idleFired) return;
-      if (Date.now() - this.lastUserVoiceAt >= nudgeMs) {
-        this.idleFired = true;
-        console.log(`[proactive] 触发 nudge（静默 ${Math.round((Date.now() - this.lastUserVoiceAt) / 1000)}s，情绪延迟 ${nudgeMs}ms）`);
-        this.host.speakProactive('nudge').catch(console.error);
-      } else {
+      if (!this.host.rtc || this.host.speaking) return;
+      if (Date.now() - this.lastUserVoiceAt < target) {
         this.armIdleCheck();
+        return;
+      }
+      this.noReplyStreak++;
+      if (this.noReplyStreak >= this.timing.noReplyLimit) {
+        this.idleFired = true;
+        console.log('[proactive] 触发 farewell（多次没回应）');
+        this.host.speakProactive('farewell').catch(console.error);
+      } else if (this.noReplyStreak === 2) {
+        console.log('[proactive] 触发 checkin（先问还在吗）');
+        this.host.speakProactive('checkin').catch(console.error);
+      } else if (this.lastTurnAskedQuestion) {
+        console.log('[proactive] 触发 followup（追问自答）');
+        this.host.speakProactive('followup').catch(console.error);
+      } else {
+        console.log(`[proactive] 触发 nudge（静默 ${Math.round((Date.now() - this.lastUserVoiceAt) / 1000)}s，情绪延迟 ${firstWait}ms）`);
+        this.host.speakProactive('nudge').catch(console.error);
       }
     }, wait);
   }
