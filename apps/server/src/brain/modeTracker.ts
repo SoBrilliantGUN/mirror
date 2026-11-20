@@ -19,8 +19,4 @@ export class ModeTracker {
     }
     return this.current;
   }
-
-  get mode(): Mode {
-    return this.current;
-  }
 }

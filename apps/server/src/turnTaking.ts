@@ -70,9 +70,19 @@ export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): num
 
 export class TurnTakingController {
   // —— 跨模块共享状态（CallSession 也会读写）——
-  // 归属约定：这些字段的「所有权」在 turnTaking（计时器/状态机读它们做决策），
-  // 但 CallSession 在少数会话生命周期点会直接写（onPlaybackEnd / onAsrResult / recordTurnOutcome）。
-  // 新增字段时先想清「谁拥有、谁只在哪个生命周期点写」，否则又会回到「一个字段两个文件改」的漂移。
+  // 归属约定：字段「所有权」在 turnTaking（状态机读它们做计时/决策），但 CallSession
+  // 在少数会话生命周期点直接写。每加一个字段，先在这里登记「谁在哪个点写」，否则会回到
+  // 「一个字段两个文件改」的漂移。现有写点：
+  //   pendingVocals         session 写：NLS 事件 add / 每轮 drain（reset+list+dominant）
+  //   lastUserTurn          session 写：onAsrResult 捕获本轮 / recordTurnOutcome 清空
+  //   reanswerCount         session 写：onAsrResult、recordTurnOutcome 清零（turnTaking 自增）
+  //   lastTurnAskedQuestion session 写：proactive / recordTurnOutcome / playCachedGreeting 记「是否在问」
+  //   lastWasFarewell       session 写：farewell/coachClose 置 true；onPlaybackEnd 读+清
+  //   idleFired             session 写：招呼语刚播完 / farewell 触发后置 true
+  //   lastUserVoiceAt       session 写：cleanupInterrupted 重置静默基准
+  //   lastReplyLatencyMs    session 只读：disinterest 判定 + transcript 落库
+  // 纯 turnTaking 内部（session 不碰）：agentDoneAt / lastBargeInAt / lastVocalRespondAt /
+  //   noReplyStreak / coachCheckinDone / pendingInterrupt + 全部计时器
   lastUserVoiceAt = Date.now();
   lastReplyLatencyMs = 0;
   agentDoneAt = 0;

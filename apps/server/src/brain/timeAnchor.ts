@@ -1,6 +1,12 @@
 // 程序化时间锚点检测与折算：从记忆 content 里用正则找时间，转成 absolute / periodic（含农历/阳历生日），
 // 并把相对词（明天/下周三/下个月/明年）改写成折算后的具体日期。
 // 替代 LLM 输出锚点——模型会忘，正则不会。纯函数、不调 LLM，可单测。
+//
+// 支持的时间表达 → 解析结果（不用读正则就能知道覆盖面；细节看下方各分支）：
+//   「生日是11月13日」      → periodic yearly 11/13      「明天」            → absolute 次日
+//   「农历八月十五」         → periodic lunar 8/15        「下周三」          → absolute 下周该日
+//   「每周五」              → periodic weekly 5          「每月15号」        → periodic monthly 15
+//   「2024年3月15日」        → absolute 2024-03-15        「3月15日」         → absolute 今年该日
 import type { PeriodicRule, TimeAnchor } from '@mirror/contracts';
 import { shanghaiParts, startOfDay } from './timezone';
 
