@@ -1,6 +1,8 @@
 export type Config = {
   // 存储
   databaseUrl: string;    // Postgres 连接串（通讯录 / 记忆）
+  // 用户身份：设置里填的用户名（空则未设）。注入系统提示词，避免语音识别把名字听成同音字。
+  userName: string;
   // L3 大脑
   deepseekApiKey: string;
   deepseekBaseUrl: string;
@@ -47,6 +49,7 @@ export type Config = {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     databaseUrl: env.DATABASE_URL ?? '',
+    userName: env.USER_NAME ?? '',
     deepseekApiKey: env.DEEPSEEK_API_KEY ?? '',
     deepseekBaseUrl: env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
     scoreModel: env.SCORE_MODEL ?? 'deepseek-chat',

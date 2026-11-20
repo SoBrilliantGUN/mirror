@@ -51,6 +51,16 @@ export function anchorLabel(a: TimeAnchor): string {
   return '';
 }
 
+// 状态性时间词：描述「记录当时」的瞬时状态（目前/正在/即将/现在/当前…），会过期、不能当永久事实。
+// 命中则在末尾标注记录日期，避免后续召回把「当时的快照」当成「现在仍然如此」。
+const TRANSIENT_TIME_RE = /目前|正在|即将|现在|当前|最近|眼下|这几天|这阵子/;
+
+export function tagRecordedAt(content: string, now: Date): string {
+  if (!TRANSIENT_TIME_RE.test(content)) return content;
+  const p = shanghaiParts(now);
+  return `${content}（记录于${p.year}年${p.month}月${p.day}日）`;
+}
+
 const DAY_MS = 86_400_000;
 
 const CN_NUM: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };

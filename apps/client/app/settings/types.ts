@@ -2,6 +2,7 @@
 export interface Settings {
   deepseekApiKey: string;
   dashscopeApiKey: string;
+  userName?: string;
   deepseekBaseUrl?: string;
   dashscopeBaseUrl?: string;
   dashscopeWsUrl?: string;

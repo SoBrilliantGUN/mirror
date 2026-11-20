@@ -86,13 +86,17 @@ function isFillerText(text: string): boolean {
   return /^[嗯哦啊好对是唔]+$/.test(t);
 }
 
-// 英文模式：按语言在系统提示词尾部追加语言要求（沉浸式 / 纠错教学）。
-function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'immersion' | 'coach'): string {
-  if (lang !== 'en') return base;
+// 组装系统提示词尾部：先注入「对方名字」（有则），再按语言追加语言要求（沉浸式 / 纠错教学）。
+function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'immersion' | 'coach', userName?: string): string {
+  let out = base;
+  if (userName) {
+    out = `${out}\n\n[对方名字] 对方的名字是「${userName}」。若语音识别把名字听成了同音字或别的写法，一律以「${userName}」为准，别再纠结写法，也别当成昵称或别名。`;
+  }
+  if (lang !== 'en') return out;
   const mode = englishMode === 'coach'
     ? '用户练英语，若其语法/用词明显有误，请温和自然地顺带点出更地道的表达，但别频繁打断，优先保证对话流畅。'
     : '自然流畅地陪用户用英文聊天即可，不要刻意纠错。';
-  return `${base}\n\n[语言要求] 本轮请全程用英文交流（自然、口语化的 English，不要用中文）。用户正在练习英语。${mode}`;
+  return `${out}\n\n[语言要求] 本轮请全程用英文交流（自然、口语化的 English，不要用中文）。用户正在练习英语。${mode}`;
 }
 
 // 是否在向用户提问（回退正则：优先用生成阶段顺带输出的 awaits 标签，漏打时用「句子里出现过问号」判断）。
@@ -592,7 +596,7 @@ export class CallSession {
       affect: plan.affect,
       userGender: this.userGender,
       switchTopic,
-      personaSystemPrompt: buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode),
+      personaSystemPrompt: buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode, this.cfg.userName),
       vocalizations: vocals,
       safetyAction: plan.safetyAction,
       dependence: plan.dependence,
@@ -728,7 +732,7 @@ export class CallSession {
     try {
       const system = buildProactiveSystemPrompt(
         kind,
-        buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode),
+        buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode, this.cfg.userName),
         {
           lastQuestion: this.lastQuestionText,
           curiosityHint: kind === 'nudge' && this.coachTracker.current === 'friend' ? this.lastCuriosityHint || undefined : undefined,

@@ -68,6 +68,10 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           {f('deepseekApiKey', 'DeepSeek API Key（大脑）', { secret: true, placeholder: 'sk-...' })}
           {f('dashscopeApiKey', '阿里云百炼 API Key（语音 + 安全 + 记忆）', { secret: true, placeholder: 'sk-...' })}
 
+          <h4 className="settings-h4">你的名字（可选）</h4>
+          {f('userName', '你的名字', { placeholder: '比如：张渔歌' })}
+          <p className="settings-hint">填了之后，语音识别若把名字听成同音字（如「章宇哥」），AI 会以这里为准，不再纠结写法。</p>
+
           <button className="adv-toggle" onClick={() => setAdvanced(!advanced)}>
             {advanced ? '▾ 收起高级设置' : '▸ 高级设置（音色 / 搜索 / 哭笑脸 / 中转地址）'}
           </button>

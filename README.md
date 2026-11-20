@@ -134,6 +134,7 @@ mirror/
 cp .env.example .env
 # 编辑 .env，填入真实 key：
 #   DEEPSEEK_API_KEY / DASHSCOPE_API_KEY / NLS_APPKEY / EMBEDDING_API_KEY ...
+#   USER_NAME（可选：你的名字，避免语音识别把名字听成同音字；桌面版在「设置」里填）
 ```
 
 `.env` 已 gitignore，绝不进 git。各项含义见 `.env.example` 内注释。

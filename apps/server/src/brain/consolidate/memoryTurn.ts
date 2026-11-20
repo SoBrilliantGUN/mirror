@@ -3,7 +3,7 @@ import type { DeepSeek } from '../../llm/deepseek';
 import type { PrefetchCache } from '../assemble';
 import { DIMENSION_LIST, ASPECT_LIST } from '../ontology';
 import { shanghaiParts } from '../timezone';
-import { normalizeTimeAnchor, parseTimeAnchor, rewriteRelativeTime } from '../timeAnchor';
+import { normalizeTimeAnchor, parseTimeAnchor, rewriteRelativeTime, tagRecordedAt } from '../timeAnchor';
 import { parseJsonish } from '../parse';
 
 // 后台记忆 Agent（异步、不进热路径）：把「写记忆」和「定向召回」从实时回复里挪出来。
@@ -88,7 +88,9 @@ export async function consolidateTurn(deps: {
       const anchor = parseTimeAnchor(content, now) ?? m.anchor;
       // content 里的相对词（明天/下周三）换成折算后的具体日期，避免存进去的「明天」过几天失效。
       const rewritten = rewriteRelativeTime(content, now);
-      const mem = await store.write(personaName, userId, { kind, content: rewritten, dimension: m.dimension || null, aspect: m.aspect || null, anchor: anchor ?? null });
+      // 「目前/正在/即将」这类状态词标注记录时间，避免把瞬时状态当永久事实。
+      const tagged = tagRecordedAt(rewritten, now);
+      const mem = await store.write(personaName, userId, { kind, content: tagged, dimension: m.dimension || null, aspect: m.aspect || null, anchor: anchor ?? null });
       writtenIds.push(mem.id);
       wrote++;
     } catch (e) {

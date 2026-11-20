@@ -7,6 +7,8 @@ export interface Settings {
   // —— 必填（填了才能通话）——
   deepseekApiKey: string;
   dashscopeApiKey: string;
+  // —— 用户身份（可选；填了能避免语音识别把名字听成同音字）——
+  userName?: string;
   // —— 可选（空则用 server 侧默认）——
   deepseekBaseUrl?: string;
   dashscopeBaseUrl?: string;       // HTTP（离线合成）+ WS 中转主端点
@@ -90,6 +92,7 @@ export function saveSettings(s: Settings): void {
 export function settingsToEnv(s: Settings): Record<string, string> {
   const env: Record<string, string> = {};
   if (s.deepseekApiKey) env.DEEPSEEK_API_KEY = s.deepseekApiKey;
+  if (s.userName) env.USER_NAME = s.userName;
   if (s.deepseekBaseUrl) env.DEEPSEEK_BASE_URL = s.deepseekBaseUrl;
   if (s.dashscopeApiKey) env.DASHSCOPE_API_KEY = s.dashscopeApiKey;
   if (s.dashscopeBaseUrl) env.DASHSCOPE_BASE_URL = s.dashscopeBaseUrl;
