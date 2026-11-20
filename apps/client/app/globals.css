@@ -250,7 +250,7 @@ button { font-family: inherit; }
 
 /* ===== 顶部提示浮层 / 安全 overlay ===== */
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 24px; right: 24px;
   background: rgba(38, 42, 51, 0.92); color: #fff; padding: 10px 18px; border-radius: 12px;
   font-size: 13px; z-index: 90; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }

@@ -31,6 +31,7 @@ export default function Page() {
   const [libOpen, setLibOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
+  const [keysMissing, setKeysMissing] = useState(false);
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
   const [englishMode, setEnglishMode] = useState<'immersion' | 'coach'>('immersion');
 
@@ -77,16 +78,30 @@ export default function Page() {
     try { localStorage.setItem('mirror.englishMode', next); } catch { /* ignore */ }
   }
 
-  // 启动时拉已添加的伙伴
+  // 启动时拉已添加的伙伴。服务端冷启动（内嵌 PG + 建表 + 播种默认伙伴）可能比前端晚就绪，
+  // 单次 fetch 失败就再也不重试会把「默认添加苏明悦」吞掉——这里退避重试直到拉到。
   useEffect(() => {
-    fetch(`${getServer()}/contacts`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
-      .then((d: { names: string[] }) => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = async (attempt: number) => {
+      try {
+        const r = await fetch(`${getServer()}/contacts`);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = (await r.json()) as { names: string[] };
+        if (cancelled) return;
         const m: Record<string, boolean> = {};
         (d.names ?? []).forEach((n) => (m[n] = true));
         setAdded(m);
-      })
-      .catch(() => {});
+      } catch {
+        if (cancelled) return;
+        if (attempt < 20) timer = setTimeout(() => load(attempt + 1), 500);
+      }
+    };
+    load(0);
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
   }, []);
 
   // 滚动到底
@@ -99,6 +114,23 @@ export default function Page() {
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = setTimeout(() => setNotice(null), 4000);
   };
+
+  // 桌面版：缺 API key 时自动弹设置 + 右下角提示，并把打电话按钮禁用（未配 key 无法通话）。
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.mirrorSettings) return;
+    window.mirrorSettings
+      .get()
+      .then((s) => {
+        const missing = !s?.deepseekApiKey || !s?.dashscopeApiKey;
+        setKeysMissing(missing);
+        if (missing) {
+          setSettingsOpen(true);
+          showNotice('还没有设置 api key，暂无法使用');
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadMemories(since?: string | null) {
     if (!selected) { setMemories([]); return; }
@@ -186,7 +218,14 @@ export default function Page() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sdp: pc.localDescription?.sdp ?? offer.sdp, name: c.name, lang, englishMode }),
         });
-        if (!res.ok) throw new Error('信令 HTTP ' + res.status);
+        if (!res.ok) {
+          let msg = '信令 HTTP ' + res.status;
+          try {
+            const body = (await res.json()) as { error?: string };
+            if (body?.error) msg = body.error;
+          } catch { /* 非 JSON 响应，保留默认提示 */ }
+          throw new Error(msg);
+        }
         const { sdp } = await res.json();
         await pc.setRemoteDescription({ type: 'answer', sdp });
 
@@ -330,7 +369,6 @@ export default function Page() {
     <>
       <div className="blob b1" /><div className="blob b2" /><div className="blob b3" />
       <div className="topbar">
-        <span className="tb-brand">mirror · 生活教练陪伴</span>
         <div className="tb-right">
           <button className="lang-btn" onClick={toggleLang} title="切换聊天语言">
             {lang === 'zh' ? '中文' : 'EN'}
@@ -384,7 +422,7 @@ export default function Page() {
                   <div className="temper">{selectedCompanion.temperament}</div>
                   <div className="meta">{selectedCompanion.profession} · {selectedCompanion.gender === '女' ? '她' : '他'}</div>
                   <div className="intro">{selectedCompanion.intro}</div>
-                  <button className="call-btn" disabled={!selectedCompanion.available} onClick={() => startCall(selectedCompanion)}>
+                  <button className="call-btn" disabled={!selectedCompanion.available || keysMissing} onClick={() => startCall(selectedCompanion)}>
                     <CallIcon /> 打电话
                   </button>
                 </div>

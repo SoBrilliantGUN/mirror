@@ -1,5 +1,5 @@
 // Electron 主进程：起内嵌 PG → 起 server 子进程 → 静态服务喂前端 → 开窗口 + 设置 IPC。
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +50,18 @@ function stopServerChild(): void {
 
 async function boot(): Promise<void> {
   console.log('boot 开始');
+  // 先亮窗口：静态服务 + 窗口秒开。内嵌 PG + server 冷启动（initdb/建表/播种）放到后台，
+  // 别让首屏被 PG 初始化卡住——前端对 /contacts 已有退避重试，等 server 就绪后自然补上。
+  // renderer 在 apps/desktop/renderer（dist/ 的上一级），与 dist/ 平级。
+  await startStaticServer(join(__dirname, '..', 'renderer'), CLIENT_PORT);
+  console.log('静态服务已起');
+  await createWindow();
+  console.log('窗口已创建');
+
+  void bootBackend();
+}
+
+async function bootBackend(): Promise<void> {
   let databaseUrl = '';
   try {
     databaseUrl = await startPostgres();
@@ -69,11 +81,6 @@ async function boot(): Promise<void> {
 
   console.log('server 子进程启动中（execPath=' + process.execPath + '）');
   startServerChild(env);
-  // renderer 在 apps/desktop/renderer（dist/ 的上一级），与 dist/ 平级。
-  await startStaticServer(join(__dirname, '..', 'renderer'), CLIENT_PORT);
-  console.log('静态服务已起');
-  await createWindow();
-  console.log('窗口已创建');
 }
 
 function createWindow(): Promise<void> {
@@ -107,6 +114,8 @@ function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null); // 去掉 File/Edit/View/Window 默认菜单
+
   // 语音通话要麦克风：放开 media 权限。
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === 'media');

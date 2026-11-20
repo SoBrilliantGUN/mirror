@@ -10,7 +10,7 @@
     "prepare:pgvector": "node scripts/prepare-pgvector.mjs",
     "dev": "node build.mjs && npm run build:renderer && electron .",
     "start": "electron .",
-    "dist": "node scripts/prepare-pgvector.mjs && node build.mjs && npm run build:renderer && electron-builder --win portable"
+    "dist": "node scripts/prepare-pgvector.mjs && node build.mjs && npm run build:renderer && electron-builder --win zip"
   },
   "dependencies": {
     "embedded-postgres": "16.15.0-beta.19",
@@ -39,10 +39,7 @@
       "output": "release"
     },
     "win": {
-      "target": ["portable"]
-    },
-    "portable": {
-      "artifactName": "mirror-${version}-portable.exe"
+      "target": ["zip"]
     }
   }
 }

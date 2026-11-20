@@ -373,13 +373,25 @@ export class CallSession {
       { portRange: this.cfg.icePortRange, hostAddress: this.cfg.iceHostAddress },
     );
     await this.sed?.start();
-    await this.asr.start({
-      wsUrl: this.cfg.dashscopeWsUrl,
-      apiKey: this.cfg.dashscopeApiKey,
-      model: this.cfg.paraformerModel,
-      languageHints: this.lang === 'en' ? ['en'] : ['zh'],
-      onResult: (text, isFinal) => this.onAsrResult(text, isFinal),
-    });
+    try {
+      await this.asr.start({
+        wsUrl: this.cfg.dashscopeWsUrl,
+        apiKey: this.cfg.dashscopeApiKey,
+        model: this.cfg.paraformerModel,
+        languageHints: this.lang === 'en' ? ['en'] : ['zh'],
+        onResult: (text, isFinal) => this.onAsrResult(text, isFinal),
+      });
+    } catch (e) {
+      // ASR（语音识别）连不上就别让信令白白 500：回收半成品连接，回一个可读的错误。
+      this.rtc?.close();
+      this.rtc = null;
+      this.sed?.close();
+      const detail = (e as Error)?.message ?? String(e);
+      const hint = this.cfg.dashscopeApiKey
+        ? `（${detail}，请检查 DASHSCOPE_API_KEY / DASHSCOPE_WS_URL 是否有效）`
+        : '（未配置 DASHSCOPE_API_KEY，请先在「设置」里填写语音服务 Key）';
+      return { error: `语音识别服务连接失败${hint}`, status: 502 };
+    }
     const answer = await this.rtc.handleOffer(body.sdp);
 
     // 一联通就打招呼（异步、不阻塞响应）：优先缓存片段，预热失败回退 LLM 生成。
