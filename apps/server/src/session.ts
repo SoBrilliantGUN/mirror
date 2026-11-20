@@ -86,6 +86,13 @@ function isFillerText(text: string): boolean {
   return /^[嗯哦啊好对是唔]+$/.test(t);
 }
 
+// 纯语气词（嗯/哦/啊/呃/唔…）：不含"好/对/是"这种有实义的肯定。独立回合里出现不算真回复。
+function isPureInterjection(text: string): boolean {
+  const t = text.replace(/[。，！？!?,\s]/g, '');
+  if (!t) return false;
+  return /^[嗯哦啊呃唔噢]+$/.test(t);
+}
+
 // 组装系统提示词尾部：先注入「对方名字」（有则），再按语言追加语言要求（沉浸式 / 纠错教学）。
 function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'immersion' | 'coach', userName?: string): string {
   let out = base;
@@ -470,6 +477,14 @@ export class CallSession {
       if (this.speaking) {
         this.gate.invalidate();
         this.speaking = false;
+      }
+      // 独立回合里的纯语气词（嗯/哦/啊）不算真回复：刷新「用户还在」，但不重置「上一句在等回应」，
+      // 交给 followup 继续上一话题，别送进模型被误判成「没兴趣、换话题」。
+      if (isFinal && isPureInterjection(t)) {
+        this.turnTaking.lastUserVoiceAt = Date.now();
+        this.turnTaking.idleFired = false;
+        this.turnTaking.armIdleCheck();
+        return;
       }
       this.turnTaking.markUserVoice();
     }
