@@ -4,16 +4,14 @@
 import { strict as assert } from 'node:assert';
 import type { Memory, RecalledMemories, TimeAnchor } from '@mirror/contracts';
 import {
-  normalizeTimeAnchor,
   hasRelativeTime,
   currentTimeContext,
   nextOccurrence,
   upcomingDates,
   scheduleCareHint,
-  anchorLabel,
-  shanghaiParts,
 } from '../src/brain/timeAware';
-import { parseTimeAnchor, rewriteRelativeTime } from '../src/brain/timeAnchor';
+import { normalizeTimeAnchor, anchorLabel, parseTimeAnchor, rewriteRelativeTime } from '../src/brain/timeAnchor';
+import { shanghaiParts } from '../src/brain/timezone';
 import { formatTimeBlock } from '../src/brain/context';
 
 let passed = 0;

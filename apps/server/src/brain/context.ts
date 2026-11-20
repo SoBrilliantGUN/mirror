@@ -13,7 +13,7 @@ import type {
   VocalizationEvent,
 } from '@mirror/contracts';
 import { formatUserTurn, SAFETY_REMINDER } from './prompts';
-import { anchorLabel } from './timeAware';
+import { anchorLabel } from './timeAnchor';
 
 // 上下文分层装配器（L0–L5，参考 kima 的 context-window-layering.md）。
 // 适配 companion 的极简形态：L0 = system（人设+安全+记忆引导）、L1 = [STATE] 状态、
@@ -176,6 +176,26 @@ export function formatHistory(history: HistoryEntry[]): string {
 }
 
 // 装配 L1+L2+L4+L5 为一条 user prompt（带内标记分界，供模型分界 + 代码锚点回捞）。
+//
+// 块 ← 来源字段 对照表（改注入时先查这里）：
+//   [MEMORY]           ← memories + memoryBudget
+//   [PERSONA]          ← personaBlock
+//   [SELF_ADDED]       ← selfAddedBlock
+//   [STATE]            ← mode/stance/emotion/mood/turnCount/affect/userGender
+//   [GOAL]             ← goalBlock
+//   [FOLLOW_UP]        ← goalFollowUp
+//   [TIME]             ← timeBlock
+//   [CURIOSITY]        ← curiosityHint
+//   [TOPIC]            ← switchTopic
+//   [RECENT]           ← recentSummary
+//   [HISTORY]          ← history
+//   [CRISIS_RESOURCES] ← safetyBlock
+//   [SAFETY_REMINDER]  ← 常量（尾播）
+//   [FAREWELL]         ← farewell
+//   [SAID]             ← userSaid
+//   [ASKED]            ← recentAsked
+//   [ANSWERED]         ← lastAskedQuestion
+//   【对方这一轮】       ← text + vocalizations
 export function buildLayeredUserPrompt(input: {
   mode: Mode;
   stance: Stance;

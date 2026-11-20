@@ -1,8 +1,8 @@
 import type { SelfAdded, SelfAddedStore } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
-import type { Embedder } from '../llm/embedding';
-import { cosine } from '../persona/loadPersona';
-import { parseJsonish } from './parse';
+import type { DeepSeek } from '../../llm/deepseek';
+import type { Embedder } from '../../llm/embedding';
+import { cosine } from '../../persona/loadPersona';
+import { parseJsonish } from '../parse';
 
 // 人设增补（后台 Agent，不进热路径）：把「陪伴者自己长出的软细节」固化下来。
 // - consolidateSelfAdded：一轮结束后，从「陪伴者这一轮回复」里抽「关于他自己的新软细节」

@@ -7,7 +7,7 @@ import { createPool, ensureSchema } from '../store/db';
 import { DeepSeek } from '../llm/deepseek';
 import { createEmbedder } from '../llm/embedding';
 import { createMemoryStore } from '../store/memory';
-import { dreamOnMemory } from '../brain/dream';
+import { dreamOnMemory } from '../brain/consolidate/dream';
 import { PERSONAS } from '../persona';
 import type { Memory, MemoryKind } from '@mirror/contracts';
 

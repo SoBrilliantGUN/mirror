@@ -1,6 +1,6 @@
 import type { MemoryStore } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
-import { parseJsonish } from './parse';
+import type { DeepSeek } from '../../llm/deepseek';
+import { parseJsonish } from '../parse';
 
 // 记忆巩固的「抽象升级」步：把已积累的「情节记忆」退一步酿成「稳定事实 fact」与「人设 profile」。
 // profile = 对方的身份基本信息 + 稳定特质 + 对对方的高层理解（洞察），落库后自然流进下一次 recall → L2 注入。

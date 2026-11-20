@@ -1,5 +1,25 @@
-// 单通通话的编排（CallSession）：串 ASR → L3 大脑 → TTS → WebRTC，含主动发话状态机、抢话判定期、
-// 招呼语缓存、后台记忆/课题/人设增补。生命周期 = 一通电话（每 /rtc/offer 重置状态）。
+// ============================================================
+// CallSession —— 单通通话编排。生命周期 = 一通电话（每 /rtc/offer 重置状态）。
+//
+// 职责地图（本文件唯一要背的心智模型）：
+//   · 建连        handleOffer —— 建 RTC/ASR/NLS，预热招呼语，回 SDP
+//   · 实时接入    onAsrResult —— ASR 流式 → 打断/抢话判定 → respond
+//   · 对话回合    respond —— 决策(planTurn) + 召回(recallContext) + 装配 + 逐句流水线
+//   · 主动发话    armIdleCheck / speakProactive —— 追问/checkin/找话题/道别/教练收尾
+//   · 打断/抢话   handleBargeIn / doBargeIn —— 中止生成 + 误打断重答(armReanswer)
+//   · 非言语发声  scheduleVocalRespond —— 哭/笑去抖后触发一次 respond
+//   · 挂断收尾    teardownCall —— 写通话概要 + 结束会话
+//
+// 已拆出去的（这里只留窄回调，不背实现）：
+//   · TTS 合成 + 多端点重试      → speech/ttsEngine.ts（TtsEngine）
+//   · 招呼语片段缓存/落盘         → speech/greetingClips.ts（GreetingClipCache）
+//   · 后台记忆/课题/人设巩固      → brain/consolidate/（memoryTurn / goalTurn / selfAddTurn / dream）
+//
+// 会话级字段分组：
+//   · 注入共享资源（不随通话重置）: cfg / llm / safetyLlm / embedder / memory / tts / greetingClips …
+//   · 会话状态（每通重置）: tracker / coachTracker / mood / lastAffect / persona / lang / history …
+//   · 实时互锁（计时器 + 代际中止）: currentGeneration / currentAbort / speaking / agentAudible …
+// ============================================================
 import type {
   Affect,
   DependenceSignals,
@@ -20,12 +40,13 @@ import type { HistorySummarizer } from './brain/compress';
 import type { HistoryEntry } from './brain/context';
 import type { PersonaDetail } from './persona/loadPersona';
 import type { DominantVocal } from './speech/vocalEvents';
-import type { RealtimeTTSInput } from './speech/cosyvoiceRealtime';
 import type { PrefetchCache } from './brain/assemble';
 import type { OfferBody, OfferResult } from './router';
 import { createRtcPeer } from './rtc/webrtc';
 import { ParaformerRealtimeASR } from './speech/paraformerRealtime';
-import { streamTTS, isNetworkError, isRateLimitError } from './speech/cosyvoiceRealtime';
+import { streamTTS } from './speech/cosyvoiceRealtime';
+import { TtsEngine, buildTtsEndpoints } from './speech/ttsEngine';
+import { GreetingClipCache } from './speech/greetingClips';
 import { AcousticFeatureExtractor } from './speech/acousticFeatures';
 import { NlsSoundEventDetector } from './speech/nlsSoundEvent';
 import { normalizePersonaName } from './speech/nameNormalizer';
@@ -33,7 +54,6 @@ import { VocalEventAggregator } from './speech/vocalEvents';
 import { buildInstruction, EMOTION_PROSODY, tailHint } from './speech/emotionInstruction';
 import { BackchannelEngine, BACKCHANNEL_PHRASES, concatPcm, hasVoicePcm } from './speech/backchannel';
 import { PERSONAS, resolvePersona, resolvePersonaDetails, resolveVoice } from './persona';
-import { GREETINGS, GREETINGS_EN } from './persona/greetings';
 import { createPersonaMatcher } from './persona/loadPersona';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
@@ -43,9 +63,9 @@ import { SEARCH_TOOL, pickFiller } from './brain/search';
 import { bochaSearch } from './search/bocha';
 import { streamMessages, streamMessagesWithTools, generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages } from './brain/assemble';
-import { consolidateTurn, prefetchNextTurn, createPrefetchCache } from './brain/consolidate';
-import { consolidateGoal } from './brain/goalConsolidate';
-import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './brain/selfAdd';
+import { consolidateTurn, prefetchNextTurn, createPrefetchCache } from './brain/consolidate/memoryTurn';
+import { consolidateGoal } from './brain/consolidate/goalTurn';
+import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './brain/consolidate/selfAddTurn';
 import { classifyMemory } from './brain/memoryClassifier';
 import { classifySegmentEmotion } from './brain/segmentEmotion';
 import { compressHistory } from './brain/compress';
@@ -53,18 +73,13 @@ import { summarizeCall, compressSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
 import { buildCuriosityHint } from './brain/ontology';
 import { buildGoalFollowUpHint, formatHistory } from './brain/context';
-import { neutralAcoustic } from './stubs';
+import { neutralAcoustic } from './fallbacks';
 import { SafetyGuard } from './brain/safety';
 import { CRISIS_RESOURCES } from './brain/crisisResources';
 import { createSessionsStore } from './store/sessions';
 import { createTranscriptStore } from './store/transcript';
 import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
-import {
-  greetingCacheKey,
-  loadGreetingClipsFromDisk,
-  saveGreetingClipsToDisk,
-} from './greetingCache';
 
 // 语气词附和（「嗯/哦/啊/好/对/是/唔」及其重复）：抢话语境下判定为附和、不算真实打断。
 function isFillerText(text: string): boolean {
@@ -133,9 +148,6 @@ const TOPIC_DRIFT_LIMIT = 3;
 const VOCAL_DEBOUNCE_MS = 3000;
 const VOCAL_MAX_HOLD_MS = 6000;
 const VOCAL_COOLDOWN_MS = 8000;
-const TTS_MAX_ATTEMPTS = 3;
-const TTS_NETWORK_BACKOFF_MS = 600;
-const TTS_RATELIMIT_BACKOFF_MS = 2000;
 
 export type SessionDeps = {
   cfg: Config;
@@ -238,9 +250,9 @@ export class CallSession {
     (pcm, gain) => this.rtc?.pushAgentPcm(pcm, gain),
   );
 
-  private readonly greetingClips = new Map<string, Uint8Array[]>();
-  private readonly greetingPhrases = new Map<string, string[]>();
-  private readonly greetingInFlight = new Map<string, Promise<void>>();
+  private readonly tts: TtsEngine; // 构造器赋值（依赖 cfg 端点 + rtc 闭包）
+
+  private readonly greetingClips: GreetingClipCache; // 构造器赋值（依赖 cfg）
 
   constructor(deps: SessionDeps) {
     this.cfg = deps.cfg;
@@ -262,6 +274,19 @@ export class CallSession {
     this.userId = deps.userId;
     // safetyGuard 依赖 safetyLlm/cfg，字段初始化在构造器赋值之后再建。
     this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
+    // TTS 合成引擎：把「整句合成 + 多端点重试」委托出去，只留 pushPcm 回调指向当前 RTC。
+    this.tts = new TtsEngine(
+      buildTtsEndpoints(this.cfg),
+      (pcm) => this.rtc?.pushAgentPcm(pcm),
+      () => { this.agentAudible = true; },
+      (ms) => this.sleep(ms),
+    );
+    // 招呼语片段缓存：只管加载/落盘；播放与落库仍在本类。
+    this.greetingClips = new GreetingClipCache({
+      wsUrl: this.cfg.dashscopeWsUrl,
+      apiKey: this.cfg.dashscopeApiKey,
+      model: this.cfg.cosyvoiceModel,
+    });
   }
 
   get personaName(): string {
@@ -277,7 +302,7 @@ export class CallSession {
     for (const p of Object.values(PERSONAS)) {
       if (!p.available) continue;
       const voice = resolveVoice(p.name, this.cfg.cosyvoiceVoice);
-      this.preloadGreetingClips(voice, p.name, p.voiceTint, p.rate ?? 1.0).catch((e) =>
+      this.greetingClips.ensure(voice, p.name, p.voiceTint, p.rate ?? 1.0).catch((e) =>
         console.warn(`[greeting] ${p.name} 招呼语预热失败：`, e),
       );
     }
@@ -437,7 +462,7 @@ export class CallSession {
     this.idleFired = true;
     void (async () => {
       try {
-        await this.preloadGreetingClips(greetVoice, this.persona.name, this.persona.voiceTint, this.persona.rate ?? 1.0, this.lang);
+        await this.greetingClips.ensure(greetVoice, this.persona.name, this.persona.voiceTint, this.persona.rate ?? 1.0, this.lang);
         await this.rtc?.whenReady();
         await this.obs.trace('greeting', { metadata: { kind: 'cached' } }, async () => {
           this.playCachedGreeting(greetVoice, this.lang);
@@ -634,7 +659,7 @@ export class CallSession {
         this.obs.score('first-token-ms', firstTokenMs);
       }
       console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
-      await this.obs.span('tts', () => this.synthesizeWithRetry({
+      await this.obs.span('tts', () => this.tts.synthesize({
         model: this.cfg.cosyvoiceModel,
         voice: resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang),
         instruction: buildInstruction(segEmotion, this.persona.voiceTint) + tailHint(clean),
@@ -880,7 +905,7 @@ export class CallSession {
       if (!seg) return;
       console.log('[proactive] 文本：', seg);
       this.obs.setOutput(seg);
-      await this.obs.span('tts', () => this.synthesizeWithRetry({
+      await this.obs.span('tts', () => this.tts.synthesize({
         model: this.cfg.cosyvoiceModel,
         voice: resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang),
         instruction: buildInstruction('natural', this.persona.voiceTint) + tailHint(seg),
@@ -1141,52 +1166,6 @@ export class CallSession {
     }
   }
 
-  private ttsEndpoints(): Array<{ url: string; key: string }> {
-    const eps = [{ url: this.cfg.dashscopeWsUrl, key: this.cfg.dashscopeApiKey }];
-    if (this.cfg.dashscopeWsFallbackUrl && this.cfg.dashscopeOfficialApiKey) {
-      eps.push({ url: this.cfg.dashscopeWsFallbackUrl, key: this.cfg.dashscopeOfficialApiKey });
-    }
-    return eps;
-  }
-
-  private async synthesizeWithRetry(params: Omit<RealtimeTTSInput, 'wsUrl' | 'apiKey'>): Promise<void> {
-    const endpoints = this.ttsEndpoints();
-    let lastErr: unknown = null;
-    for (let i = 0; i < endpoints.length; i++) {
-      const ep = endpoints[i];
-      let attempt = 0;
-      while (true) {
-        try {
-          this.agentAudible = true;
-          const acc: Uint8Array[] = [];
-          for await (const pcm of streamTTS({ ...params, wsUrl: ep.url, apiKey: ep.key })) {
-            if (params.signal?.aborted) break;
-            acc.push(pcm);
-          }
-          if (params.signal?.aborted) return;
-          // 整句攒完一次性推进队列：先缓冲完整句再播，逐句顺序放，避免「来一段放一段」的流式卡顿
-          for (const pcm of acc) this.rtc?.pushAgentPcm(pcm);
-          return;
-        } catch (e) {
-          if (params.signal?.aborted) return;
-          lastErr = e;
-          if (!isNetworkError(e) && !isRateLimitError(e)) throw e;
-          const rateLimit = isRateLimitError(e);
-          attempt++;
-          if (attempt >= TTS_MAX_ATTEMPTS) break;
-          const wait = (rateLimit ? TTS_RATELIMIT_BACKOFF_MS : TTS_NETWORK_BACKOFF_MS) * attempt;
-          const reason = (e as { code?: string })?.code ?? (e as Error)?.message ?? String(e);
-          console.log(`[TTS] ${rateLimit ? '限流' : '网络失败'}（${reason}），${wait}ms 后重试（端点 ${i + 1}/${endpoints.length} 第 ${attempt} 次）`);
-          await this.sleep(wait);
-        }
-      }
-      if (i < endpoints.length - 1) {
-        console.log(`[TTS] 端点 ${ep.url} 多次失败，切兜底端点`);
-      }
-    }
-    throw lastErr;
-  }
-
   private async preloadBackchannelClips(voice: string, name: string): Promise<void> {
     const clips: Uint8Array[] = [];
     for (const phrase of BACKCHANNEL_PHRASES) {
@@ -1206,73 +1185,26 @@ export class CallSession {
     console.log(`[backchannel] ${name} 片段就绪（${clips.length} 句）`);
   }
 
-  private async preloadGreetingClips(voice: string, name: string, voiceTint: string, rate: number, lang: 'zh' | 'en' = 'zh'): Promise<void> {
-    const key = `${voice}:${lang}`;
-    if (this.greetingClips.has(key)) return;
-    const inflight = this.greetingInFlight.get(key);
-    if (inflight) return inflight;
-
-    const task = (async () => {
-      const phrases = (lang === 'en' ? GREETINGS_EN[name] : GREETINGS[name]) ?? ['喂，你好呀', '嗨，是我', '你好呀'];
-      this.greetingPhrases.set(key, phrases);
-      const cacheFile = greetingCacheKey(voice, phrases);
-      const fromDisk = loadGreetingClipsFromDisk(cacheFile);
-      if (fromDisk) {
-        this.greetingClips.set(key, fromDisk);
-        console.log(`[greeting] ${name}${lang === 'en' ? '(EN)' : ''} 招呼语已从磁盘缓存加载（${fromDisk.length} 句）`);
-        return;
-      }
-      const clips: Uint8Array[] = [];
-      for (const phrase of phrases) {
-        const parts: Uint8Array[] = [];
-        for await (const pcm of streamTTS({
-          wsUrl: this.cfg.dashscopeWsUrl,
-          apiKey: this.cfg.dashscopeApiKey,
-          model: this.cfg.cosyvoiceModel,
-          voice,
-          instruction: buildInstruction('natural', voiceTint) + tailHint(phrase),
-          text: phrase,
-          rate,
-        })) parts.push(pcm);
-        clips.push(concatPcm(parts));
-      }
-      this.greetingClips.set(key, clips);
-      saveGreetingClipsToDisk(cacheFile, clips);
-      console.log(`[greeting] ${name}${lang === 'en' ? '(EN)' : ''} 招呼语就绪（${clips.length} 句）`);
-    })();
-
-    this.greetingInFlight.set(key, task);
-    try {
-      await task;
-    } finally {
-      this.greetingInFlight.delete(key);
-    }
-  }
-
   private playCachedGreeting(voice: string, lang: 'zh' | 'en' = 'zh') {
     if (!this.rtc || this.speaking) return;
-    const key = `${voice}:${lang}`;
-    const clips = this.greetingClips.get(key);
-    if (!clips || clips.length === 0) return;
-    const idx = Math.floor(Math.random() * clips.length);
-    const pick = clips[idx];
-    const phrase = this.greetingPhrases.get(key)?.[idx] ?? '';
+    const pick = this.greetingClips.pick(`${voice}:${lang}`);
+    if (!pick) return;
     console.log('[greeting] 播放缓存招呼语');
     this.speaking = true;
     this.agentAudible = true;
     this.lastTurnAskedQuestion = false;
-    this.rtc.pushAgentPcm(pick);
+    this.rtc.pushAgentPcm(pick.clip);
     this.rtc.end();
-    if (phrase) {
-      this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: phrase });
+    if (pick.phrase) {
+      this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: pick.phrase });
       this.transcript.insert(this.persona.name, this.userId, {
         sessionId: this.currentSessionId,
         role: 'agent',
-        text: phrase,
+        text: pick.phrase,
         turnIndex: this.turnCount,
         emotion: 'natural',
         frame: this.coachTracker.current,
-        asked: isAsking(phrase),
+        asked: isAsking(pick.phrase),
       }).catch((e) => console.warn('[transcript] 招呼语落库失败：', e));
     }
   }

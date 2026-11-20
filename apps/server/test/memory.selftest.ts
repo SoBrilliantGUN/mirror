@@ -3,7 +3,7 @@
 import { strict as assert } from 'node:assert';
 import type { RecalledMemories } from '@mirror/contracts';
 import { parseMemoryType } from '../src/brain/memoryClassifier';
-import { parseReflection } from '../src/brain/reflect';
+import { parseReflection } from '../src/brain/consolidate/reflect';
 import { rrfFuse } from '../src/store/memory';
 import {
   estimateTokens,
@@ -14,7 +14,7 @@ import {
 } from '../src/brain/context';
 import { compressHistory, pickLevel, estimateHistoryTokens, historyToText } from '../src/brain/compress';
 import { parseDetail, cosine, formatPersonaBlock, type PersonaDetail } from '../src/persona/loadPersona';
-import { parseExtraction, parseRetraction } from '../src/brain/consolidate';
+import { parseExtraction, parseRetraction } from '../src/brain/consolidate/memoryTurn';
 import { mergeRecalled } from '../src/brain/assemble';
 
 let passed = 0;

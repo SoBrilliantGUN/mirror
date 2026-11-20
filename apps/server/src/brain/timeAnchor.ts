@@ -1,8 +1,55 @@
 // 程序化时间锚点检测与折算：从记忆 content 里用正则找时间，转成 absolute / periodic（含农历/阳历生日），
 // 并把相对词（明天/下周三/下个月/明年）改写成折算后的具体日期。
 // 替代 LLM 输出锚点——模型会忘，正则不会。纯函数、不调 LLM，可单测。
-import type { TimeAnchor } from '@mirror/contracts';
-import { shanghaiParts, startOfDay } from './timeAware';
+import type { PeriodicRule, TimeAnchor } from '@mirror/contracts';
+import { shanghaiParts, startOfDay } from './timezone';
+
+const WEEKDAY_CN = ['一', '二', '三', '四', '五', '六', '日'];
+
+// 时间锚点结构规范化（抽取出的 raw 可能带字符串数字/缺字段，这里钉回合法结构）。非法返回 undefined。
+export function normalizeTimeAnchor(raw: unknown): TimeAnchor | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (o.kind === 'absolute') {
+    const at = String(o.at ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(at)) return undefined;
+    return { kind: 'absolute', at };
+  }
+  if (o.kind === 'periodic') {
+    const r = (o.rule ?? {}) as Record<string, unknown>;
+    const type = String(r.type ?? '');
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const weekday = Number(r.weekday);
+    const time = typeof r.time === 'string' && r.time ? r.time : undefined;
+    if (type === 'yearly' && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return { kind: 'periodic', rule: { type: 'yearly', month, day } };
+    }
+    if (type === 'monthly' && day >= 1 && day <= 31) {
+      return { kind: 'periodic', rule: { type: 'monthly', day } };
+    }
+    if (type === 'weekly' && weekday >= 1 && weekday <= 7) {
+      const rule: PeriodicRule = { type: 'weekly', weekday, ...(time ? { time } : {}) };
+      return { kind: 'periodic', rule };
+    }
+    if (type === 'lunar' && month >= 1 && month <= 12 && day >= 1 && day <= 30) {
+      return { kind: 'periodic', rule: { type: 'lunar', month, day } };
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+// 供 context.ts 的 [TIME] 块格式化：把锚点转成人类可读文案。
+export function anchorLabel(a: TimeAnchor): string {
+  if (a.kind === 'absolute') return a.at;
+  const r = a.rule;
+  if (r.type === 'yearly') return `${r.month}月${r.day}日`;
+  if (r.type === 'monthly') return `每月${r.day}日`;
+  if (r.type === 'weekly') return `每周${WEEKDAY_CN[r.weekday - 1]}${r.time ? ' ' + r.time : ''}`;
+  if (r.type === 'lunar') return `农历${r.month}月${r.day}`;
+  return '';
+}
 
 const DAY_MS = 86_400_000;
 

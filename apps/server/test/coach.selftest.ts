@@ -2,7 +2,7 @@
 // 运行：npm test
 import { strict as assert } from 'node:assert';
 import { CoachTracker, parseCoachCue } from '../src/brain/coach';
-import { deriveStage, parseGoalExtract } from '../src/brain/goalConsolidate';
+import { deriveStage, parseGoalExtract } from '../src/brain/consolidate/goalTurn';
 
 let passed = 0;
 function ok(name: string, fn: () => void) {

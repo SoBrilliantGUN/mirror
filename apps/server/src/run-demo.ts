@@ -3,7 +3,7 @@
 import { loadConfig, loadDotEnv } from './config';
 import { DeepSeek } from './llm/deepseek';
 import { PERSONAS } from './persona/generated';
-import { NoopSafetyGuard, neutralAcoustic } from './stubs';
+import { NoopSafetyGuard, neutralAcoustic } from './fallbacks';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { turn } from './brain/turn';

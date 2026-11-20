@@ -1,8 +1,8 @@
 import type { MemoryKind, MemoryStore } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
-import type { Embedder } from '../llm/embedding';
+import type { DeepSeek } from '../../llm/deepseek';
+import type { Embedder } from '../../llm/embedding';
 import { reflectOnMemory } from './reflect';
-import { parseJsonish } from './parse';
+import { parseJsonish } from '../parse';
 
 // 做梦（空闲时自动巩固记忆）——三步：
 // ① 抽象升级：episodic → fact + persona（复用 reflect 的高层综合）；

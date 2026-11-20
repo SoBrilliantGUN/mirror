@@ -1,6 +1,6 @@
 import type { GrowthGoalStore, GrowthStage } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
-import { parseJsonish } from './parse';
+import type { DeepSeek } from '../../llm/deepseek';
+import { parseJsonish } from '../parse';
 
 // 后台课题巩固（异步、不进热路径）：教练轮结束后，把「这轮聊的课题」结构化落进 growth_goals。
 // 只更新 GROW 四段 + 推进 stage + 检测做成/放下，其余交给 [GOAL] 块 + 模型做轻表达。

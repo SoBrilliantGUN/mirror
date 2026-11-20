@@ -2,7 +2,7 @@
 // 运行：npm test
 import { strict as assert } from 'node:assert';
 import type { SelfAdded } from '@mirror/contracts';
-import { parseSelfAdded } from '../src/brain/selfAdd';
+import { parseSelfAdded } from '../src/brain/consolidate/selfAddTurn';
 import { formatSelfAddedBlock } from '../src/brain/context';
 
 let passed = 0;

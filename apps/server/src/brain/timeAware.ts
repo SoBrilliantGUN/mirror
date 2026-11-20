@@ -1,6 +1,5 @@
 import type {
   MemoryStore,
-  PeriodicRule,
   RecalledMemories,
   TimeAnchor,
   TimeAware,
@@ -8,44 +7,16 @@ import type {
   UpcomingDate,
 } from '@mirror/contracts';
 import type { HolidayMap } from './holiday';
+import { shanghaiParts, shanghaiMidnight, startOfDay } from './timezone';
 
 // 时间感知（L5）：三层都只在通话内被动体现，不推送、不调度。
 // - currentTimeContext：纯函数，输入 Date，输出结构化时间上下文（A 注入用）。
 // - upcomingDates：查带时间锚点的活跃记忆，评估「今天/临近」命中（B 重要日期）。
 // - scheduleCareHint：深夜/凌晨 + 记忆里有作息痕迹时给一句软提示（C 作息关怀）。
 // 时间锚点硬约束：记忆里的时间只能是绝对或周期，禁止相对（今天/明天/下周三）。
-// 注：程序化时间检测/折算（正则找时间 → 锚点）已拆到 timeAnchor.ts，这里只留「消费」侧。
+// 注：时区换算（shanghaiParts/startOfDay/shanghaiMidnight）在 timezone.ts；锚点解析/折算与规范化/标签在 timeAnchor.ts。
 
-const WEEKDAY_CN = ['一', '二', '三', '四', '五', '六', '日'];
-
-// 东八区（Asia/Shanghai）固定偏移：国内用户固定东八区，中国无夏令时，+8h 精确。
-// 不依赖服务器/容器时区——Docker 默认 UTC，直接读本地时间会差 8 小时。
-const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 86_400_000;
-
-// 把「此刻」换算成东八区墙上字段：给 instant 加 8h 偏移后读其 UTC 字段，即北京时间。
-export function shanghaiParts(now: Date): { year: number; month: number; day: number; weekday: number; hour: number; minute: number } {
-  const w = new Date(now.getTime() + SHANGHAI_OFFSET_MS);
-  const jsDay = w.getUTCDay(); // 0=周日…6=周六
-  return {
-    year: w.getUTCFullYear(),
-    month: w.getUTCMonth() + 1, // 1-12
-    day: w.getUTCDate(),
-    weekday: jsDay === 0 ? 7 : jsDay, // 1=周一…7=周日
-    hour: w.getUTCHours(),
-    minute: w.getUTCMinutes(),
-  };
-}
-
-// 东八区某年某月某日 00:00 的 epoch ms（北京时间的「当天零点」）。
-function shanghaiMidnight(year: number, month: number, day: number): Date {
-  return new Date(Date.UTC(year, month - 1, day) - SHANGHAI_OFFSET_MS);
-}
-
-export function startOfDay(d: Date): Date {
-  const p = shanghaiParts(d);
-  return shanghaiMidnight(p.year, p.month, p.day);
-}
 
 function monthToSeason(m: number): TimeContext['season'] {
   if (m >= 3 && m <= 5) return '春';
@@ -84,40 +55,6 @@ export function currentTimeContext(now: Date, holidays: HolidayMap = new Map()):
     season: monthToSeason(p.month),
     period: hourToPeriod(p.hour),
   };
-}
-
-// 时间锚点结构规范化（抽取出的 raw 可能带字符串数字/缺字段，这里钉回合法结构）。非法返回 undefined。
-export function normalizeTimeAnchor(raw: unknown): TimeAnchor | undefined {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const o = raw as Record<string, unknown>;
-  if (o.kind === 'absolute') {
-    const at = String(o.at ?? '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(at)) return undefined;
-    return { kind: 'absolute', at };
-  }
-  if (o.kind === 'periodic') {
-    const r = (o.rule ?? {}) as Record<string, unknown>;
-    const type = String(r.type ?? '');
-    const month = Number(r.month);
-    const day = Number(r.day);
-    const weekday = Number(r.weekday);
-    const time = typeof r.time === 'string' && r.time ? r.time : undefined;
-    if (type === 'yearly' && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return { kind: 'periodic', rule: { type: 'yearly', month, day } };
-    }
-    if (type === 'monthly' && day >= 1 && day <= 31) {
-      return { kind: 'periodic', rule: { type: 'monthly', day } };
-    }
-    if (type === 'weekly' && weekday >= 1 && weekday <= 7) {
-      const rule: PeriodicRule = { type: 'weekly', weekday, ...(time ? { time } : {}) };
-      return { kind: 'periodic', rule };
-    }
-    if (type === 'lunar' && month >= 1 && month <= 12 && day >= 1 && day <= 30) {
-      return { kind: 'periodic', rule: { type: 'lunar', month, day } };
-    }
-    return undefined;
-  }
-  return undefined;
 }
 
 // 相对时间词守卫：记忆 content 里不允许残留这些（读的时候「明天」已失效）。用于抽取后自检/告警。
@@ -224,15 +161,4 @@ export function createTimeAware(store: Pick<MemoryStore, 'listAnchored'>, holida
       upcomingDates(store, characterId, userId, now, windowDays),
     scheduleCareHint,
   };
-}
-
-// 供 context.ts 的 [TIME] 块格式化：把锚点转成人类可读文案。
-export function anchorLabel(a: TimeAnchor): string {
-  if (a.kind === 'absolute') return a.at;
-  const r = a.rule;
-  if (r.type === 'yearly') return `${r.month}月${r.day}日`;
-  if (r.type === 'monthly') return `每月${r.day}日`;
-  if (r.type === 'weekly') return `每周${WEEKDAY_CN[r.weekday - 1]}${r.time ? ' ' + r.time : ''}`;
-  if (r.type === 'lunar') return `农历${r.month}月${r.day}`;
-  return '';
 }

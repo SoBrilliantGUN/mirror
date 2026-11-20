@@ -1,10 +1,10 @@
 import type { Memory, MemoryKind, MemoryStore, TimeAnchor } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
-import type { PrefetchCache } from './assemble';
-import { DIMENSION_LIST, ASPECT_LIST } from './ontology';
-import { normalizeTimeAnchor, shanghaiParts } from './timeAware';
-import { parseTimeAnchor, rewriteRelativeTime } from './timeAnchor';
-import { parseJsonish } from './parse';
+import type { DeepSeek } from '../../llm/deepseek';
+import type { PrefetchCache } from '../assemble';
+import { DIMENSION_LIST, ASPECT_LIST } from '../ontology';
+import { shanghaiParts } from '../timezone';
+import { normalizeTimeAnchor, parseTimeAnchor, rewriteRelativeTime } from '../timeAnchor';
+import { parseJsonish } from '../parse';
 
 // 后台记忆 Agent（异步、不进热路径）：把「写记忆」和「定向召回」从实时回复里挪出来。
 // - consolidateTurn：一轮结束后，从「对方说了什么 + 我回了什么」里抽取值得长期记住的内容，分类后落库。
