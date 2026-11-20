@@ -3,8 +3,8 @@ import type { Pool } from 'pg';
 import type { Memory, MemoryKind, MemoryStore, PeriodicRule, RecalledMemories, TimeAnchor } from '@mirror/contracts';
 import type { Embedder } from '../llm/embedding';
 
-// 长期记忆存储（Postgres + pgvector + pg_trgm）。四型记忆 + 混合召回，参考 kima 的
-// CopilotMemory，但只保留「核心 4 件」需要的子集：constraint 硬召回、fact entity 覆盖、
+// 长期记忆存储（Postgres + pgvector + pg_trgm）。五型记忆 + 混合召回，参考 kima 的
+// CopilotMemory，但只保留核心子集：constraint 硬召回、fact entity 覆盖、
 // episodic 30 天软衰减、dense+trgm 的 RRF 融合召回。不做软删除复活 / ACT-R 激活值那些重设施。
 //
 // 隔离维度：每条记忆同时挂 character_id（哪个陪伴者记得）+ user_id（哪位用户）。人物间画像
@@ -360,7 +360,7 @@ export function createMemoryStore(
         hybridRecall(personaName, userId, 'fact', query, qvec),
         hybridRecall(personaName, userId, 'episodic', query, qvec),
       ]);
-      return { constraint, fact, preference, episodic, profile };
+      return { constraint, profile, fact, preference, episodic };
     },
 
     async search(personaName, userId, query, kind, topK = recallTopK): Promise<Memory[]> {

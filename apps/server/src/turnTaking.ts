@@ -69,7 +69,10 @@ export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): num
 }
 
 export class TurnTakingController {
-  // —— 跨模块共享状态（CallSession 的 respond/onAsrResult/onPlaybackEnd 也读写） ——
+  // —— 跨模块共享状态（CallSession 也会读写）——
+  // 归属约定：这些字段的「所有权」在 turnTaking（计时器/状态机读它们做决策），
+  // 但 CallSession 在少数会话生命周期点会直接写（onPlaybackEnd / onAsrResult / recordTurnOutcome）。
+  // 新增字段时先想清「谁拥有、谁只在哪个生命周期点写」，否则又会回到「一个字段两个文件改」的漂移。
   lastUserVoiceAt = Date.now();
   lastReplyLatencyMs = 0;
   agentDoneAt = 0;
@@ -127,6 +130,20 @@ export class TurnTakingController {
       clearTimeout(this.hangupTimer);
       this.hangupTimer = null;
     }
+  }
+
+  // 陪伴者干净说完（onPlaybackEnd）：重置静默计时基准 + 记下结束时刻（供下一轮算回复延迟）。
+  markAgentDone(): void {
+    this.lastUserVoiceAt = Date.now();
+    this.agentDoneAt = Date.now();
+  }
+
+  // 用户只发出语气词（嗯/哦/啊，非真实回复）：只刷新「用户还在」+ 重新武装静默计时，
+  // 不碰 lastTurnAskedQuestion 等「上一句在等回应」标记——别让语气词被当成新话题触发。
+  markUserPresence(): void {
+    this.lastUserVoiceAt = Date.now();
+    this.idleFired = false;
+    this.armIdleCheck();
   }
 
   clearReanswer(): void {

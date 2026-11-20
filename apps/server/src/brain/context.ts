@@ -49,7 +49,8 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
   return { text: lines.join('\n'), used };
 }
 
-// L2 [MEMORY] 块：四型按 约束→偏好→事实→情节 优先级，按 token 预算贪心填充；空则返回空串。
+// L2 [MEMORY] 块：五型按 约束→人设→偏好→事实→情节 优先级（约束先拿足预算、人设强制在场），
+// 按 token 预算贪心填充；空则返回空串。
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
     { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },

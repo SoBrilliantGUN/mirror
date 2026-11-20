@@ -350,7 +350,8 @@ export default function Page() {
     } catch (e) { console.error('删除记忆失败：', e); }
   }
 
-  const mono = (c: Companion) => c.name.slice(1);
+  // 头像缩写：中文名取后两个字（略去姓氏，如「程书衡」→「书衡」）。
+  const avatarText = (c: Companion) => c.name.slice(1);
   const addedList = COMPANIONS.filter((c) => added[c.name]);
   const filtered = addedList.filter((c) => c.name.includes(query) || c.temperament.includes(query));
 
@@ -383,7 +384,7 @@ export default function Page() {
             ) : (
               filtered.map((c) => (
                 <div className={`c${selected === c.name ? ' active' : ''}`} key={c.name} onClick={() => select(c.name)}>
-                  <div className="avatar" style={{ background: c.color }}>{mono(c)}<span className={`dot ${c.available ? 'on' : 'off'}`} /></div>
+                  <div className="avatar" style={{ background: c.color }}>{avatarText(c)}<span className={`dot ${c.available ? 'on' : 'off'}`} /></div>
                   <div className="cm">
                     <div className="cn">{c.name}</div>
                     <div className="ct">{c.temperament}</div>
@@ -400,7 +401,7 @@ export default function Page() {
             <div className="idle">
               {selectedCompanion ? (
                 <div className="idle-card">
-                  <div className="avatar big" style={{ background: selectedCompanion.color }}>{mono(selectedCompanion)}</div>
+                  <div className="avatar big" style={{ background: selectedCompanion.color }}>{avatarText(selectedCompanion)}</div>
                   <div className="name" style={{ fontSize: 20, fontWeight: 700 }}>{selectedCompanion.name}</div>
                   <div className="temper">{selectedCompanion.temperament}</div>
                   <div className="meta">{selectedCompanion.profession} · {selectedCompanion.gender === '女' ? '她' : '他'}</div>
@@ -418,7 +419,7 @@ export default function Page() {
           {inCall && selectedCompanion && (
             <>
               <div className="chat-h">
-                <div className="avatar" style={{ background: selectedCompanion.color }}>{mono(selectedCompanion)}</div>
+                <div className="avatar" style={{ background: selectedCompanion.color }}>{avatarText(selectedCompanion)}</div>
                 <div>
                   <div className="name">{selectedCompanion.name}</div>
                   <div className="status">{status || selectedCompanion.temperament}</div>
@@ -505,7 +506,7 @@ export default function Page() {
             <div className="panel-body">
               {COMPANIONS.map((c) => (
                 <div className="add-row" key={c.name}>
-                  <div className="avatar" style={{ background: c.color }}>{mono(c)}<span className={`dot ${c.available ? 'on' : 'off'}`} /></div>
+                  <div className="avatar" style={{ background: c.color }}>{avatarText(c)}<span className={`dot ${c.available ? 'on' : 'off'}`} /></div>
                   <div className="meta">
                     <div className="name">{c.name}</div>
                     <div className="temper">{c.temperament}</div>

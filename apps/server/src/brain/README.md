@@ -4,12 +4,29 @@
 
 | L 层 | 含义 | 文件 |
 |---|---|---|
-| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`mood.ts`（心境 EMA）、`coach.ts`（教练意图+Frame 状态机）、`modeTracker.ts`（mode 防抖） |
+| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`coach.ts`（教练意图+Frame 状态机） |
 | L4 | 安全红线 | `safety.ts`（危机+过度依赖，独立小模型）、`crisisResources.ts`（热线资源） |
 | L5 | 状态 / 会话 / 记忆 | `modeTracker.ts`、`mood.ts`、`compress.ts`（历史压缩）、`recentSummary.ts`（跨通话概要）、`timeAnchor.ts`/`timeAware.ts`/`holiday.ts`/`timezone.ts`（时间感知）、`ontology.ts`（好奇心维度） |
 | 记忆「写」 | 后台巩固（不进热路径） | `consolidate/`（memoryTurn / goalTurn / selfAddTurn / dream / reflect / afterTurn） |
 
 **情绪概念 5 连**：`Affect`（本轮瞬时分）→ `MoodState`（多轮 EMA）→ `Mode`（casual/careful）→ `Stance`（陪/引）→ `EmotionTag`（TTS 语气）。详见 `packages/contracts/src/affect.ts` 顶部对照表。
+
+**情绪状态怎么流转**（从打分到出句，落地在 `turn.ts` 的 `planTurn`）：
+
+```
+text + acoustic + vocalizations
+        │  scoreAffect（call1，LLM 一次，融合文本+副语言+哭/笑）
+        ▼
+     Affect（本轮瞬时三维分，一次性）
+        │
+        ├─► updateMood ─────────────► MoodState（多轮 EMA，会话级轨迹）
+        ├─► decideMode + ModeTracker ► Mode（casual/careful，带防抖）
+        ├─► decideStance ───────────► Stance（陪 accompany / 引 guide）
+        └─► decideEmotion(+dominantVocal) ► EmotionTag（喂 TTS 的语气）
+
+  正交轴：Frame（friend/coach）← classifyCoachCue + CoachTracker（教练意图，与 Mode 无关）
+  安全轴：SafetyGuard.check → SafetyAction（危机）/ DependenceAction（依赖），前置并行
+```
 
 **存储实现在哪**：`brain/*` 里只有「纯函数 + 接口类型」，真正的 Postgres 实现都在 `store/`（`memory.ts` 等）。`MemoryStore` 等接口契约在 `packages/contracts`。
 

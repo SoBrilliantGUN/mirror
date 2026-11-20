@@ -1,5 +1,8 @@
 // L6 构建期生成：把 character/<姓名>/ 的角色卡 + 记忆索引 → 结构化 Persona（server）+ Companion（client）。
 // 唯一事实源 = character/。生成物 gitignore、不进 git，构建/启动前跑本脚本（npm run gen:personas）。
+// 注：server 的 Persona（systemPrompt/voiceTint/rate，喂 LLM）与 client 的 Companion
+// （temperament/profession/intro/color，喂 UI）是同一批 character/ 源的两份不同形状产物，
+// 刻意分开——两端要的字段与用途不同，别为了「去重」把两者并成一份。
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

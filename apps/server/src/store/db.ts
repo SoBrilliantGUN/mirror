@@ -36,7 +36,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id text NOT NULL,
       character_id text NOT NULL,        -- 哪个陪伴者记得的（按人物隔离用户画像；键 = persona.name）
-      kind text NOT NULL,                -- constraint | fact | preference | episodic | persona
+      kind text NOT NULL,                -- constraint | fact | preference | episodic | profile
       content text NOT NULL,
       entity_id text,                    -- fact 的稳定实体键（如 user:job），空则不按实体覆盖
       embedding vector(1024),            -- 与 EMBEDDING_DIM 对齐（默认 1024）

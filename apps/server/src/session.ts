@@ -76,7 +76,7 @@ import { neutralAcoustic } from './fallbacks';
 import { SafetyGuard } from './brain/safety';
 import { CRISIS_RESOURCES } from './brain/crisisResources';
 import { createSessionsStore } from './store/sessions';
-import { createTranscriptStore } from './store/transcript';
+import { createTranscriptStore, type TurnInsert } from './store/transcript';
 import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
 
@@ -408,8 +408,7 @@ export class CallSession {
         onPlaybackEnd: () => {
           this.speaking = false;
           this.agentAudible = false;
-          this.turnTaking.lastUserVoiceAt = Date.now();
-          this.turnTaking.agentDoneAt = Date.now();
+          this.turnTaking.markAgentDone();
           if (this.turnTaking.lastWasFarewell) {
             this.turnTaking.lastWasFarewell = false;
             this.turnTaking.scheduleHangup();
@@ -487,9 +486,7 @@ export class CallSession {
       // 独立回合里的纯语气词（嗯/哦/啊）不算真回复：刷新「用户还在」，但不重置「上一句在等回应」，
       // 交给 followup 继续上一话题，别送进模型被误判成「没兴趣、换话题」。
       if (isFinal && isPureInterjection(t)) {
-        this.turnTaking.lastUserVoiceAt = Date.now();
-        this.turnTaking.idleFired = false;
-        this.turnTaking.armIdleCheck();
+        this.turnTaking.markUserPresence();
         return;
       }
       this.turnTaking.markUserVoice();
@@ -708,15 +705,11 @@ export class CallSession {
         this.turnTaking.lastTurnAskedQuestion = asked;
         if (asked) this.lastQuestionText = seg; else this.lastQuestionText = '';
         if (kind === 'farewell' || kind === 'coachClose') this.turnTaking.lastWasFarewell = true;
-        this.transcript.insert(this.persona.name, this.userId, {
-          sessionId: this.currentSessionId,
-          role: 'agent',
-          text: seg,
-          turnIndex: this.turnCount,
+        this.recordTranscript('agent', seg, {
           emotion: 'natural',
           frame: this.coachTracker.current,
           asked,
-        }).catch((e) => console.warn('[transcript] 主动话落库失败：', e));
+        });
       }
     } catch (e) {
       console.warn('[proactive] 主动发话失败：', e);
@@ -780,15 +773,11 @@ export class CallSession {
     this.rtc.end();
     if (pick.phrase) {
       this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: pick.phrase });
-      this.transcript.insert(this.persona.name, this.userId, {
-        sessionId: this.currentSessionId,
-        role: 'agent',
-        text: pick.phrase,
-        turnIndex: this.turnCount,
+      this.recordTranscript('agent', pick.phrase, {
         emotion: 'natural',
         frame: this.coachTracker.current,
         asked: isAsking(pick.phrase),
-      }).catch((e) => console.warn('[transcript] 招呼语落库失败：', e));
+      });
     }
   }
 
@@ -825,22 +814,14 @@ export class CallSession {
     if (agentText) this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: agentText });
     this.obs.setOutput(agentText);
     const asked = awaitsResponse !== null ? awaitsResponse : isAsking(agentText);
-    this.transcript.insert(this.persona.name, this.userId, {
-      sessionId: this.currentSessionId,
-      role: 'user',
-      text: userText,
-      turnIndex: this.turnCount,
+    this.recordTranscript('user', userText, {
       affect: plan.affect,
       acoustic: acoustics,
       vocals: vocals.length ? vocals : undefined,
       latencyMs: this.turnTaking.lastReplyLatencyMs || null,
-    }).catch((e) => console.warn('[transcript] 用户话落库失败：', e));
+    });
     if (agentText) {
-      this.transcript.insert(this.persona.name, this.userId, {
-        sessionId: this.currentSessionId,
-        role: 'agent',
-        text: agentText,
-        turnIndex: this.turnCount,
+      this.recordTranscript('agent', agentText, {
         emotion: plan.emotion,
         recalled: {
           constraint: ctx.recalled.constraint.map((m) => ({ id: m.id, content: m.content })),
@@ -854,7 +835,7 @@ export class CallSession {
         mode: plan.mode,
         stance: plan.stance,
         asked,
-      }).catch((e) => console.warn('[transcript] 陪伴者话落库失败：', e));
+      });
     }
     this.turnTaking.lastTurnAskedQuestion = asked;
     this.lastQuestionText = asked ? agentText : '';
@@ -888,6 +869,18 @@ export class CallSession {
         for (const f of res.facts) this.userSaid.push(f);
       })
       .catch((e) => console.warn('[memory] 后台写记忆失败：', e));
+  }
+
+  // 逐轮聊天记录落库（fire-and-forget）。用户话/陪伴者话/主动发话/招呼语四处共用，
+  // 之前各写一份近乎相同的 insert 样板；收敛到这一处，sessionId/role/text/turnIndex 由这里统一填。
+  private recordTranscript(role: 'user' | 'agent', text: string, extra: Omit<TurnInsert, 'sessionId' | 'role' | 'text' | 'turnIndex'> = {}): void {
+    this.transcript.insert(this.persona.name, this.userId, {
+      sessionId: this.currentSessionId,
+      role,
+      text,
+      turnIndex: this.turnCount,
+      ...extra,
+    }).catch((e) => console.warn(`[transcript] ${role === 'user' ? '用户' : '陪伴者'}话落库失败：`, e));
   }
 
   private sleep(ms: number): Promise<void> {

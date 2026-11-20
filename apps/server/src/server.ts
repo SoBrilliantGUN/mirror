@@ -56,7 +56,8 @@ export async function main() {
   const holidayMap = await loadHolidayMap(shanghaiParts(new Date()).year); // 节假日/工作日判定
   const timeAware = createTimeAware(memory, holidayMap); // 时间感知（L5）
   const summarizer = createSummarizer(llm, cfg.generateModel);
-  // 上下文窗口预算：压缩只打 L5 历史；这里给 L2 记忆与 L5 历史两个粗略预算。
+  // 上下文窗口预算：压缩只打 L5 历史。窗口切分（合计约 85%，留余量给 system prompt 等固定成本）：
+  // L2 记忆 35% + L5 历史 50%；记忆块内部还有约束子预算 40%（见 context.ts CONSTRAINT_BUDGET_RATIO）。
   const memoryBudget = Math.floor(cfg.contextMaxTokens * 0.35);
   const historyBudget = Math.floor(cfg.contextMaxTokens * 0.5);
   const userId = 'demo-user'; // 尚未有账号体系，先固定单用户；接鉴权后按会话取 userId。

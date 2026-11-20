@@ -98,7 +98,6 @@ mirror/
 │   │       ├── server.ts        # 入口：装配配置/存储 → router + CallSession + 做梦巩固
 │   │       ├── session.ts       # 单通通话编排（ASR→L3→TTS + 主动发话状态机 + 抢话）
 │   │       ├── router.ts        # HTTP 路由（通讯录/记忆库/导出/信令）
-│   │       ├── greetingCache.ts # 招呼语磁盘缓存（序列化 + 落盘）
 │   │       ├── vector.ts        # 向量工具（cosine，persona 与记忆巩固共用）
 │   │       └── brain/ store/ speech/ rtc/ llm/ persona/ obs/ scripts/
 │   │           ├── brain/README.md   # 交接速查：L 层↔文件映射 + 情绪概念 5 连
