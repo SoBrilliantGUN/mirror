@@ -243,6 +243,11 @@ button { font-family: inherit; }
 .row-btn:hover { background: var(--accent-soft); }
 .row-btn.danger { color: var(--muted); }
 .row-btn.danger:hover { color: var(--danger); background: rgba(229, 72, 77, 0.08); }
+.mem-edit-input {
+  width: 100%; box-sizing: border-box; font-size: 13px; line-height: 1.5; font-family: inherit;
+  color: var(--ink); background: #fff; border: 1px solid var(--accent); border-radius: 8px;
+  padding: 8px 10px; resize: vertical; min-height: 60px; outline: none; display: block;
+}
 .expand-row td { padding: 0 12px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.6); }
 .expand-full {
   background: rgba(255, 255, 255, 0.75); border-radius: 10px; padding: 12px 14px;

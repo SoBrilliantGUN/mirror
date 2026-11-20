@@ -25,6 +25,10 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  // 行内编辑状态：Electron 里 window.prompt() 不被支持，改用表格内 textarea 就地编辑。
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // 删除二次确认：Electron 的 confirm() 已弃用，改成「删除 → 确认删除」两步，不依赖原生弹窗。
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
     if (!character) return;
@@ -38,20 +42,32 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
 
   useEffect(() => { if (character) load(); }, [character]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function edit(m: Mem) {
-    const text = prompt('修改这条记忆：', m.content);
-    if (text == null || !text.trim()) return;
-    await fetch(`${getServer()}/memories/${m.id}?character=${encodeURIComponent(character)}`, {
+  function startEdit(m: Mem) {
+    setExpanded(null); // 收起展开行，别跟编辑框抢空间
+    setDeleting(null);
+    setEditing({ id: m.id, text: m.content });
+  }
+
+  async function saveEdit() {
+    if (!editing || !editing.text.trim()) { setEditing(null); return; }
+    await fetch(`${getServer()}/memories/${editing.id}?character=${encodeURIComponent(character)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: text.trim() }),
+      body: JSON.stringify({ content: editing.text.trim() }),
     });
+    setEditing(null);
     load();
   }
 
+  function startDelete(id: string) {
+    setExpanded(null);
+    setEditing(null);
+    setDeleting(id);
+  }
+
   async function remove(m: Mem) {
-    if (!confirm('删除这条记忆？（会从 AI 记忆里移除）')) return;
     await fetch(`${getServer()}/memories/${m.id}?character=${encodeURIComponent(character)}`, { method: 'DELETE' });
+    setDeleting(null);
     load();
   }
 
@@ -96,14 +112,40 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
                   <Fragment key={m.id}>
                     <tr
                       className={`mem-row${expanded === m.id ? ' open' : ''}`}
-                      onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                      onClick={() => { if (editing?.id !== m.id) setExpanded(expanded === m.id ? null : m.id); }}
                     >
                       <td className="col-kind"><span className={`chip ${chipClass(m.kind)}`}>{KIND_LABEL[m.kind] ?? m.kind}</span></td>
-                      <td className="col-content" title={m.content}>{m.content}</td>
+                      <td className="col-content" title={m.content}>
+                        {editing?.id === m.id ? (
+                          <textarea
+                            className="mem-edit-input"
+                            value={editing.text}
+                            autoFocus
+                            rows={3}
+                            onChange={(e) => setEditing({ id: m.id, text: e.target.value })}
+                          />
+                        ) : (
+                          m.content
+                        )}
+                      </td>
                       <td className="col-date">{m.createdAt.slice(0, 10)}</td>
                       <td className="col-ops">
-                        <button className="row-btn" onClick={(e) => { e.stopPropagation(); edit(m); }}>编辑</button>
-                        <button className="row-btn danger" onClick={(e) => { e.stopPropagation(); remove(m); }}>删除</button>
+                        {editing?.id === m.id ? (
+                          <>
+                            <button className="row-btn" onClick={(e) => { e.stopPropagation(); saveEdit(); }}>保存</button>
+                            <button className="row-btn danger" onClick={(e) => { e.stopPropagation(); setEditing(null); }}>取消</button>
+                          </>
+                        ) : deleting === m.id ? (
+                          <>
+                            <button className="row-btn danger" onClick={(e) => { e.stopPropagation(); remove(m); }}>确认删除</button>
+                            <button className="row-btn" onClick={(e) => { e.stopPropagation(); setDeleting(null); }}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="row-btn" onClick={(e) => { e.stopPropagation(); startEdit(m); }}>编辑</button>
+                            <button className="row-btn danger" onClick={(e) => { e.stopPropagation(); startDelete(m.id); }}>删除</button>
+                          </>
+                        )}
                       </td>
                     </tr>
                     {expanded === m.id && (
