@@ -96,6 +96,10 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
     return clean;
   };
 
+  // 逐句情绪（B2）：非首句走 classifySegmentEmotion，首句用本轮基调。speakSegments 与工具分支共用。
+  const classifySeg = (seg: string): Promise<EmotionTag> =>
+    classifySegmentEmotion(llm, generateModel, extractAwaits(seg).clean, baseEmotion);
+
   const speakSegments = async (segments: AsyncIterable<string> | string[]): Promise<string> => {
     const it = asyncIterator(segments);
     let full = '';
@@ -103,7 +107,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
 
     const classify = async (seg: string): Promise<{ text: string; emotion: EmotionTag }> => ({
       text: seg,
-      emotion: await classifySegmentEmotion(llm, generateModel, extractAwaits(seg).clean, baseEmotion),
+      emotion: await classifySeg(seg),
     });
     const prefetch = async (): Promise<{ text: string; emotion: EmotionTag } | null> => {
       const n = await it.next();
@@ -136,9 +140,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
     for await (const ev of streamMessagesWithTools(llm, generateModel, messages, [SEARCH_TOOL])) {
       if (!gate.isCurrent(gen)) return { fullText, awaitsResponse, firstTokenMs };
       if (ev.kind === 'sentence') {
-        const segEmotion = i === 0
-          ? baseEmotion
-          : await classifySegmentEmotion(llm, generateModel, extractAwaits(ev.text).clean, baseEmotion);
+        const segEmotion = i === 0 ? baseEmotion : await classifySeg(ev.text);
         spoken += await speakOne(ev.text, i, segEmotion);
         i++;
       } else if (ev.kind === 'tool_calls') {

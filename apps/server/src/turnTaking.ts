@@ -51,10 +51,9 @@ export type TurnTakingHost = {
   coachIsActive(): boolean;
   mood: MoodState | null;
   lastAffect: Affect | null;
-  get speaking(): boolean;
-  set speaking(v: boolean);
-  get agentAudible(): boolean;
-  set agentAudible(v: boolean);
+  get speaking(): boolean;      // 读：判断是否还在说
+  get agentAudible(): boolean;  // 读：判断是否听得见
+  stopSpeaking(): void;         // 写：打断时收敛「停说 + 停听」，归属 CallSession（不直接 set 宿主字段）
 };
 
 // 非问句结尾后的「轻问找话题」等待时长：根据对方当前情绪动态决定，不写死一个数。
@@ -249,8 +248,7 @@ export class TurnTakingController {
     this.host.gate.invalidate();
     this.host.rtc?.clear();
     this.host.resetBackchannel();
-    this.host.speaking = false;
-    this.host.agentAudible = false;
+    this.host.stopSpeaking();
     this.agentDoneAt = 0;
     this.markUserVoice();
     this.armReanswer();

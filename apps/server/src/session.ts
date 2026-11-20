@@ -23,6 +23,7 @@
 //   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …（turn-taking 共享状态见 turnTaking.ts）
 // ============================================================
 import type {
+  AcousticFeatures,
   Affect,
   DependenceSignals,
   GrowthGoalStore,
@@ -41,7 +42,7 @@ import type { HistorySummarizer } from './brain/compress';
 import type { HistoryEntry } from './brain/context';
 import type { PersonaDetail } from './persona/loadPersona';
 import type { DominantVocal } from './speech/vocalEvents';
-import type { PrefetchCache } from './brain/assemble';
+import type { PrefetchCache, RecalledContext } from './brain/assemble';
 import type { OfferBody, OfferResult } from './router';
 import { createRtcPeer, type RtcCallbacks, type RtcPeer, type RtcIceOptions } from './rtc/webrtc';
 import { ParaformerRealtimeASR } from './speech/paraformerRealtime';
@@ -59,7 +60,7 @@ import { streamTurnSpeech } from './speech/speakPipeline';
 import { TurnTakingController, DEFAULT_TIMING, type TurnTakingTiming, type TurnTakingHost, type ProactiveKind } from './turnTaking';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
-import { planTurn } from './brain/turn';
+import { planTurn, type TurnPlan } from './brain/turn';
 import { evaluateDisinterest, evaluatePerfunctory } from './brain/topicSwitch';
 import { generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/assemble';
@@ -67,7 +68,7 @@ import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
 import { classifyMemory } from './brain/memoryClassifier';
 import { GenerationGate } from './brain/generationGate';
 import { compressHistory } from './brain/compress';
-import { summarizeCall, compressSummaries } from './brain/recentSummary';
+import { summarizeCall, mergeCallSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
 import { buildCuriosityHint } from './brain/ontology';
 import { buildGoalFollowUpHint, formatHistory } from './brain/context';
@@ -275,9 +276,8 @@ export class CallSession {
       get mood() { return self.mood; },
       get lastAffect() { return self.lastAffect; },
       get speaking() { return self.speaking; },
-      set speaking(v) { self.speaking = v; },
       get agentAudible() { return self.agentAudible; },
-      set agentAudible(v) { self.agentAudible = v; },
+      stopSpeaking: () => { self.speaking = false; self.agentAudible = false; },
     };
     this.turnTaking = new TurnTakingController(host, this.timing);
   }
@@ -288,6 +288,31 @@ export class CallSession {
 
   get isInCall(): boolean {
     return this.rtc !== null;
+  }
+
+  // 每通电话开始时的状态复位（单一入口）。新增会话级状态字段时，这里 + turnTaking.reset() 一起改，
+  // 避免「新字段漏复位」——之前 handleOffer 里散着一批、turnTaking.reset() 里又一批，容易漂移。
+  private resetSessionState(): void {
+    this.history = [];
+    this.tracker = new ModeTracker();
+    this.coachTracker = new CoachTracker();
+    this.goalFollowUpDone = false;
+    this.turnTaking.reset();
+    this.mood = null;
+    this.lastAffect = null;
+    this.turnCount = 0;
+    this.loadedDetails = [];
+    this.prefetchCache.clear();
+    this.lastQuestionText = '';
+    this.userSaid.length = 0;
+    this.prevTurnMemoryIds = [];
+    this.lastCuriosityHint = '';
+    this.recentSummaryText = '';
+    this.disinterestStreak = 0;
+    this.perfunctoryStreak = 0;
+    this.consecutiveQuestions = 0;
+    this.speaking = false;
+    this.userGender = null;
   }
 
   // 启动即把所有上线人物的招呼语预热成缓存片段，让第一通的第一句话一定是缓存好的（秒回）。
@@ -329,33 +354,14 @@ export class CallSession {
     this.sed?.close();
     this.asr = this.asrFactory();
     this.acoustic = new AcousticFeatureExtractor();
-    this.history = [];
-    this.tracker = new ModeTracker();
-    this.coachTracker = new CoachTracker();
-    this.goalFollowUpDone = false;
-    this.turnTaking.reset();
+    this.resetSessionState();
     this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
-    this.mood = null;
-    this.lastAffect = null;
-    this.turnCount = 0;
-    this.loadedDetails = [];
-    this.prefetchCache.clear();
-    this.lastQuestionText = '';
-    this.userSaid.length = 0;
-    this.prevTurnMemoryIds = [];
-    this.lastCuriosityHint = '';
-    this.recentSummaryText = '';
     this.conversationSummaries.recent(this.persona.name, this.userId, 3)
       .then(async (summaries) => {
         if (summaries.length === 0) return;
-        this.recentSummaryText = await compressSummaries(this.llm, this.cfg.generateModel, summaries).catch(() => summaries.join('\n'));
+        this.recentSummaryText = await mergeCallSummaries(this.llm, this.cfg.generateModel, summaries).catch(() => summaries.join('\n'));
       })
       .catch(() => {});
-    this.disinterestStreak = 0;
-    this.perfunctoryStreak = 0;
-    this.consecutiveQuestions = 0;
-    this.speaking = false;
-    this.userGender = null;
 
     // 哭/笑检测（NLS 云端）：收 PCM、出事件。连不上/未配凭证时 onEvent 不被调用，主链路照常。
     const hasToken = Boolean(this.cfg.nlsToken);
@@ -649,87 +655,11 @@ export class CallSession {
       obs: this.obs,
     });
     if (this.gate.isCurrent(myGen)) {
-      this.turnTaking.lastUserTurn = null;
-      this.turnTaking.reanswerCount = 0;
-      this.history.push({ kind: 'turn', role: 'user', text: userText });
-      if (fullText.trim()) this.history.push({ kind: 'turn', role: 'agent', text: fullText.trim() });
       reachedEnd = true;
-      this.rtc?.end();
-      const replyText = fullText.trim();
-      if (replyText) this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: replyText });
-      this.obs.setOutput(replyText);
-      const asked = awaitsResponse !== null ? awaitsResponse : isAsking(replyText);
-      this.transcript.insert(this.persona.name, this.userId, {
-        sessionId: this.currentSessionId,
-        role: 'user',
-        text: userText,
-        turnIndex: this.turnCount,
-        affect: plan.affect,
-        acoustic: acoustics,
-        vocals: vocals.length ? vocals : undefined,
-        latencyMs: this.turnTaking.lastReplyLatencyMs || null,
-      }).catch((e) => console.warn('[transcript] 用户话落库失败：', e));
-      if (replyText) {
-        this.transcript.insert(this.persona.name, this.userId, {
-          sessionId: this.currentSessionId,
-          role: 'agent',
-          text: replyText,
-          turnIndex: this.turnCount,
-          emotion: plan.emotion,
-          recalled: {
-            constraint: ctx.recalled.constraint.map((m) => ({ id: m.id, content: m.content })),
-            profile: ctx.recalled.profile.map((m) => ({ id: m.id, content: m.content })),
-            fact: ctx.recalled.fact.map((m) => ({ id: m.id, content: m.content })),
-            preference: ctx.recalled.preference.map((m) => ({ id: m.id, content: m.content })),
-            episodic: ctx.recalled.episodic.map((m) => ({ id: m.id, content: m.content })),
-          },
-          latencyMs: firstTokenMs || null,
-          frame: plan.frame,
-          mode: plan.mode,
-          stance: plan.stance,
-          asked,
-        }).catch((e) => console.warn('[transcript] 陪伴者话落库失败：', e));
-      }
-      this.turnTaking.lastTurnAskedQuestion = asked;
-      if (asked) this.lastQuestionText = replyText; else this.lastQuestionText = '';
-      if (asked && replyText) this.askedQuestions.record(this.persona.name, this.userId, replyText).catch(() => {});
-      if (asked) this.consecutiveQuestions++; else this.consecutiveQuestions = 0;
-      if (plan.farewell) {
-        this.turnTaking.lastTurnAskedQuestion = false;
-        this.turnTaking.lastWasFarewell = true;
-        this.turnTaking.idleFired = true;
-      }
-
-      consolidateAfterTurn({
-        llm: this.llm,
-        model: this.cfg.generateModel,
-        memory: this.memory,
-        goals: this.goals,
-        selfAdded: this.selfAdded,
-        embedder: this.embedder,
-        classify: (raw) => classifyMemory(this.llm, this.cfg.generateModel, raw),
-        userId: this.userId,
-        personaName: this.persona.name,
-        userText,
-        agentText: fullText.trim(),
-        personaSystemPrompt: this.persona.systemPrompt,
-        frame: plan.frame,
-        prefetchCache: this.prefetchCache,
-        retractIds: this.prevTurnMemoryIds,
-      })
-        .then((res) => {
-          this.prevTurnMemoryIds = res.writtenIds;
-          for (const f of res.facts) this.userSaid.push(f);
-        })
-        .catch((e) => console.warn('[memory] 后台写记忆失败：', e));
+      this.recordTurnOutcome({ plan, ctx, userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
     }
     } finally {
-      if (this.gate.isCurrent(myGen) && !reachedEnd) {
-        this.speaking = false;
-        this.agentAudible = false;
-        this.turnTaking.lastUserVoiceAt = Date.now();
-        this.turnTaking.armIdleCheck();
-      }
+      this.cleanupInterrupted(myGen, reachedEnd);
     }
     });
   }
@@ -791,12 +721,7 @@ export class CallSession {
     } catch (e) {
       console.warn('[proactive] 主动发话失败：', e);
     } finally {
-      if (this.gate.isCurrent(myGen) && !reachedEnd) {
-        this.speaking = false;
-        this.agentAudible = false;
-        this.turnTaking.lastUserVoiceAt = Date.now();
-        this.turnTaking.armIdleCheck();
-      }
+      this.cleanupInterrupted(myGen, reachedEnd);
     }
     });
   }
@@ -865,6 +790,104 @@ export class CallSession {
         asked: isAsking(pick.phrase),
       }).catch((e) => console.warn('[transcript] 招呼语落库失败：', e));
     }
+  }
+
+  // 一轮没跑到 clean end（出错 / 半路被打断）时的收尾：代际仍当前才复位说话状态 + 重新武装静默计时。
+  // respond 与 speakProactive 的 finally 共用，避免两处手写同样的几行。
+  private cleanupInterrupted(myGen: number, reachedEnd: boolean): void {
+    if (this.gate.isCurrent(myGen) && !reachedEnd) {
+      this.speaking = false;
+      this.agentAudible = false;
+      this.turnTaking.lastUserVoiceAt = Date.now();
+      this.turnTaking.armIdleCheck();
+    }
+  }
+
+  // 一轮成功出句后的收尾：写历史 + 写 transcript（用户/陪伴者）+ asked 记账 + farewell 标记 + 派发后台巩固。
+  // 从 respond() 抽出，让 respond 只留「决策 → 装配 → 出句」的主线。
+  private recordTurnOutcome(opts: {
+    plan: TurnPlan;
+    ctx: RecalledContext;
+    userText: string;
+    fullText: string;
+    acoustics: AcousticFeatures;
+    vocals: VocalizationEvent[];
+    awaitsResponse: boolean | null;
+    firstTokenMs: number;
+  }): void {
+    const { plan, ctx, userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs } = opts;
+    this.turnTaking.lastUserTurn = null;
+    this.turnTaking.reanswerCount = 0;
+    this.history.push({ kind: 'turn', role: 'user', text: userText });
+    const agentText = fullText.trim();
+    if (agentText) this.history.push({ kind: 'turn', role: 'agent', text: agentText });
+    this.rtc?.end();
+    if (agentText) this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: agentText });
+    this.obs.setOutput(agentText);
+    const asked = awaitsResponse !== null ? awaitsResponse : isAsking(agentText);
+    this.transcript.insert(this.persona.name, this.userId, {
+      sessionId: this.currentSessionId,
+      role: 'user',
+      text: userText,
+      turnIndex: this.turnCount,
+      affect: plan.affect,
+      acoustic: acoustics,
+      vocals: vocals.length ? vocals : undefined,
+      latencyMs: this.turnTaking.lastReplyLatencyMs || null,
+    }).catch((e) => console.warn('[transcript] 用户话落库失败：', e));
+    if (agentText) {
+      this.transcript.insert(this.persona.name, this.userId, {
+        sessionId: this.currentSessionId,
+        role: 'agent',
+        text: agentText,
+        turnIndex: this.turnCount,
+        emotion: plan.emotion,
+        recalled: {
+          constraint: ctx.recalled.constraint.map((m) => ({ id: m.id, content: m.content })),
+          profile: ctx.recalled.profile.map((m) => ({ id: m.id, content: m.content })),
+          fact: ctx.recalled.fact.map((m) => ({ id: m.id, content: m.content })),
+          preference: ctx.recalled.preference.map((m) => ({ id: m.id, content: m.content })),
+          episodic: ctx.recalled.episodic.map((m) => ({ id: m.id, content: m.content })),
+        },
+        latencyMs: firstTokenMs || null,
+        frame: plan.frame,
+        mode: plan.mode,
+        stance: plan.stance,
+        asked,
+      }).catch((e) => console.warn('[transcript] 陪伴者话落库失败：', e));
+    }
+    this.turnTaking.lastTurnAskedQuestion = asked;
+    this.lastQuestionText = asked ? agentText : '';
+    if (asked && agentText) this.askedQuestions.record(this.persona.name, this.userId, agentText).catch(() => {});
+    if (asked) this.consecutiveQuestions++; else this.consecutiveQuestions = 0;
+    if (plan.farewell) {
+      this.turnTaking.lastTurnAskedQuestion = false;
+      this.turnTaking.lastWasFarewell = true;
+      this.turnTaking.idleFired = true;
+    }
+
+    consolidateAfterTurn({
+      llm: this.llm,
+      model: this.cfg.generateModel,
+      memory: this.memory,
+      goals: this.goals,
+      selfAdded: this.selfAdded,
+      embedder: this.embedder,
+      classify: (raw) => classifyMemory(this.llm, this.cfg.generateModel, raw),
+      userId: this.userId,
+      personaName: this.persona.name,
+      userText,
+      agentText,
+      personaSystemPrompt: this.persona.systemPrompt,
+      frame: plan.frame,
+      prefetchCache: this.prefetchCache,
+      retractIds: this.prevTurnMemoryIds,
+    })
+      .then((res) => {
+        this.prevTurnMemoryIds = res.writtenIds;
+        for (const f of res.facts) this.userSaid.push(f);
+      })
+      .catch((e) => console.warn('[memory] 后台写记忆失败：', e));
   }
 
   private sleep(ms: number): Promise<void> {

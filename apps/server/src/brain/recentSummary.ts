@@ -4,8 +4,9 @@ import { historyToText } from './compress';
 
 // 最近对话概要（跨通话）：
 // - summarizeCall：通话结束时把这一通的 history 概括成「话题脉络」。
-// - compressSummaries：通话前把最近 3 天的多份概要合并；超预算先 LLM 压成一段短回顾再注入。
+// - mergeCallSummaries：通话前把最近 3 天的多份概要合并；超预算先 LLM 压成一段短回顾再注入。
 // 与长期语义记忆（事实/偏好/情节/人设）互补：那个记「稳定事实」，这个记「最近聊了啥」。
+// 命名区分：compressHistory（compress.ts，会话内 L5 历史压缩）≠ 本文件的「跨通话概要」。
 
 const SUMMARY_SYSTEM = `你是对话概要助手。读下面这段刚结束的通话记录，用第三人称、口语化地概括「这次聊了哪些话题、大致聊了什么」。2~4 句，像回忆一段刚结束的聊天，不要写成事实清单，不要输出解释。`;
 
@@ -33,7 +34,7 @@ export async function summarizeCall(llm: DeepSeek, model: string, history: Histo
 }
 
 // 合并多份概要：不超预算则原样按时间顺序拼接，超预算则 LLM 压成一段短回顾。
-export async function compressSummaries(llm: DeepSeek, model: string, summaries: string[]): Promise<string> {
+export async function mergeCallSummaries(llm: DeepSeek, model: string, summaries: string[]): Promise<string> {
   const joined = summaries.join('\n');
   if (!joined.trim()) return '';
   if (estimateTokens(joined) <= RECENT_BUDGET_TOKENS) return joined;

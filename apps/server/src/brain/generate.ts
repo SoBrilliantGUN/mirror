@@ -20,6 +20,28 @@ function findSentenceEnd(s: string): number {
   return -1;
 }
 
+// 流式切句：把字符增量按句末标点切成完整句子，未完成的尾巴留待 flush() 吐出。
+// streamMessages / streamMessagesWithTools 共用，消掉两处重复的 buffer + findSentenceEnd 循环。
+class SentenceSplitter {
+  private buf = '';
+  push(text: string): string[] {
+    this.buf += text;
+    const out: string[] = [];
+    let idx;
+    while ((idx = findSentenceEnd(this.buf)) !== -1) {
+      const sentence = this.buf.slice(0, idx).trim();
+      this.buf = this.buf.slice(idx);
+      if (sentence && HAS_WORD.test(sentence)) out.push(sentence);
+    }
+    return out;
+  }
+  flush(): string {
+    const rest = this.buf.trim();
+    this.buf = '';
+    return rest && HAS_WORD.test(rest) ? rest : '';
+  }
+}
+
 // 流式出句：LLM 边生成边把「已完成的句子」yield 出去，让 TTS 尽早开跑（砍首字延迟）。
 // 剩余的不完整尾巴（可能没有句末标点）在流结束时作为最后一句 yield。
 export async function* streamMessages(
@@ -27,18 +49,12 @@ export async function* streamMessages(
   model: string,
   messages: ChatMessage[],
 ): AsyncGenerator<string> {
-  let buf = '';
+  const splitter = new SentenceSplitter();
   for await (const delta of llm.stream(messages, { model, temperature: 0.6 })) {
-    buf += delta;
-    let idx;
-    while ((idx = findSentenceEnd(buf)) !== -1) {
-      const sentence = buf.slice(0, idx).trim();
-      buf = buf.slice(idx);
-      if (sentence && HAS_WORD.test(sentence)) yield sentence;
-    }
+    for (const sentence of splitter.push(delta)) yield sentence;
   }
-  const rest = buf.trim();
-  if (rest && HAS_WORD.test(rest)) yield rest;
+  const rest = splitter.flush();
+  if (rest) yield rest;
 }
 
 // 流式出句（工具使能）：边生成边按句 yield（kind:'sentence'，供 TTS 尽早开跑）；
@@ -54,27 +70,21 @@ export async function* streamMessagesWithTools(
   messages: ChatMessage[],
   tools: Tool[],
 ): AsyncGenerator<GenerateEvent> {
-  let buf = '';
+  const splitter = new SentenceSplitter();
   let calls: ToolCall[] = [];
   let emitted = false;
   for await (const ev of llm.streamWithTools(messages, tools, { model, temperature: 0.6 })) {
     if (ev.type === 'text') {
-      buf += ev.text;
-      let idx;
-      while ((idx = findSentenceEnd(buf)) !== -1) {
-        const sentence = buf.slice(0, idx).trim();
-        buf = buf.slice(idx);
-        if (sentence && HAS_WORD.test(sentence)) {
-          emitted = true;
-          yield { kind: 'sentence', text: sentence };
-        }
+      for (const sentence of splitter.push(ev.text)) {
+        emitted = true;
+        yield { kind: 'sentence', text: sentence };
       }
     } else if (ev.type === 'tool_calls') {
       calls = ev.calls;
     }
   }
-  const rest = buf.trim();
-  if (rest && HAS_WORD.test(rest)) {
+  const rest = splitter.flush();
+  if (rest) {
     emitted = true;
     yield { kind: 'sentence', text: rest };
   }

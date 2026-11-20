@@ -5,6 +5,7 @@ import { DIMENSION_LIST, ASPECT_LIST } from '../ontology';
 import { shanghaiParts } from '../timezone';
 import { normalizeTimeAnchor, parseTimeAnchor, rewriteRelativeTime, tagRecordedAt } from '../timeAnchor';
 import { parseJsonish } from '../parse';
+import { MEMORY_KIND_GLOSS } from '../memoryTaxonomy';
 
 // 后台记忆 Agent（异步、不进热路径）：把「写记忆」和「定向召回」从实时回复里挪出来。
 // - consolidateTurn：一轮结束后，从「对方说了什么 + 我回了什么」里抽取值得长期记住的内容，分类后落库。
@@ -18,9 +19,8 @@ const EXTRACT_SYSTEM_PROMPT = `你是记忆抽取助手。读「对方这一轮�
 1. 只抽「关于对方的稳定事实 / 反复表达的偏好 / 重要事件」，第三人称、一句话、具体不空泛。对方的事实只能来自【对方这一轮】。
 2. 【我这一轮】是陪伴者（你自己的人设）说的话，仅供理解语境，严禁从中抽取任何内容。陪伴者用第一人称说的（如「我拍照」「我遛狗」「我做时尚博主」）是他自己的事，绝不能写成「对方…」；陪伴者的猜测/追问（「是不是…」「可能…」「你是在…吧」）也不是对方说过的，不得写成对方的事实。
 3. 每句都记、琐碎寒暄不记。0~5 条，宁缺毋滥。
-4. kind 先自报（fact / preference / episodic / profile），系统会再核对一次。其中：
-   - profile = 人设，只记「身份基本信息」和「稳定特质」两类——名字/性别/年龄/职业/学校/地域/重要关系（如「对方是深圳大学学生」「对方自称章鱼哥」），以及性格/价值观/长期模式这类长期稳定的东西。别把一次性的状态（如「正在找工作」）写成 profile，那属于 fact。
-   - fact = 可变的、具体的事实状态（「正在学 RocketMQ」「目前没工作」「正在找工作」）。
+4. kind 先自报（fact / preference / episodic / profile），系统会再核对一次。分类定义见：
+${MEMORY_KIND_GLOSS}
    - 一条只记一件事。若对方一句话里同时含「身份/地域/称呼」+「偏好」+「当前状态」，拆成多条分别归类：身份/地域/称呼（强相关，关于"对方是谁"）→ profile；口味/习惯等偏好 → preference；当前状态/正在做的事（弱相关）→ fact。严禁把身份信息（职业/学校/地域/重要关系/称呼）塞进 fact。
 5. dimension 归入哪个维度（${DIMENSION_LIST}），实在归不进去就留空字符串。
 6. aspect 归入该维度的哪个子项（${ASPECT_LIST}），没有对应子项就留空字符串。

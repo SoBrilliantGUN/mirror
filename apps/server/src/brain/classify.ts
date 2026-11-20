@@ -2,7 +2,7 @@ import type { DeepSeek } from '../llm/deepseek';
 import { parseJsonish } from './parse';
 
 // 统一的「LLM 判定 → 抽 JSON → 解析 → 兜底」分类骨架。
-// 四个「分类器」（farewell / coachCue / memory）同构——一个 SYSTEM_PROMPT + 一次 chat +
+// 三个 JSON 分类器（farewell / coachCue / memory）同构——一个 SYSTEM_PROMPT + 一次 chat +
 // parseJsonish + 一个 parse 纯函数 + 失败兜底——之前各自写了一遍，收敛到这里。
 // segmentEmotion 是「只出一个词」的非 JSON 输出，形状不同，不走这里。
 // 每个分类器只提供 system、user、parse 纯函数与兜底值，其余（温度 0、try/catch、null 兜底）都在这里。

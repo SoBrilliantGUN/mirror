@@ -6,7 +6,7 @@ import { PERSONAS } from './persona/generated';
 import { NoopSafetyGuard, neutralAcoustic } from './fallbacks';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
-import { turn } from './brain/turn';
+import { runTurnNonStreaming } from './brain/turn';
 import type { MoodState } from '@mirror/contracts';
 
 async function main() {
@@ -25,7 +25,7 @@ async function main() {
   let mood: MoodState | null = null;
 
   const sample = '我手头事太多了，脑子快炸了。';
-  const result = await turn(
+  const result = await runTurnNonStreaming(
     {
       llm,
       scoreModel: cfg.scoreModel,

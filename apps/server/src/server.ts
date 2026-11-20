@@ -73,7 +73,7 @@ export async function main() {
     memory,
     transcript,
     userId,
-    defaultCharacter: () => session.personaName,
+    defaultPersona: () => session.personaName,
     onRtcOffer: (body) => session.handleOffer(body),
   });
   const server = createServer((req, res) => router(req, res));

@@ -123,7 +123,7 @@ export default function Page() {
 
   async function loadMemories(since?: string | null) {
     if (!selected) { setMemories([]); return; }
-    const url = `${getServer()}/memories?character=${encodeURIComponent(selected)}${since ? '&since=' + encodeURIComponent(since) : ''}`;
+    const url = `${getServer()}/memories?persona=${encodeURIComponent(selected)}${since ? '&since=' + encodeURIComponent(since) : ''}`;
     try {
       const r = await fetch(url);
       if (!r.ok) return;
@@ -332,7 +332,7 @@ export default function Page() {
   async function saveEditMem() {
     if (!editingMem || !editingMem.text.trim()) { setEditingMem(null); return; }
     try {
-      await fetch(`${getServer()}/memories/${editingMem.id}?character=${encodeURIComponent(selected ?? '')}`, {
+      await fetch(`${getServer()}/memories/${editingMem.id}?persona=${encodeURIComponent(selected ?? '')}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editingMem.text.trim() }),
@@ -344,7 +344,7 @@ export default function Page() {
 
   async function doDeleteMem(m: Mem) {
     try {
-      await fetch(`${getServer()}/memories/${m.id}?character=${encodeURIComponent(selected ?? '')}`, { method: 'DELETE' });
+      await fetch(`${getServer()}/memories/${m.id}?persona=${encodeURIComponent(selected ?? '')}`, { method: 'DELETE' });
       setDeletingMem(null);
       loadMemories(inCall ? callStartAt : null);
     } catch (e) { console.error('删除记忆失败：', e); }
@@ -525,7 +525,7 @@ export default function Page() {
       )}
 
       {libOpen && selectedCompanion && (
-        <MemoryLibrary character={selectedCompanion.name} onClose={() => setLibOpen(false)} />
+        <MemoryLibrary persona={selectedCompanion.name} onClose={() => setLibOpen(false)} />
       )}
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}

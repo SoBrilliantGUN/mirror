@@ -20,7 +20,7 @@ const TABS: { key: Filter; label: string }[] = [
   { key: 'profile', label: '人设' },
 ];
 
-export default function MemoryLibrary({ character, onClose }: { character: string; onClose: () => void }) {
+export default function MemoryLibrary({ persona, onClose }: { persona: string; onClose: () => void }) {
   const [memories, setMemories] = useState<Mem[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
@@ -31,16 +31,16 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
   const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
-    if (!character) return;
+    if (!persona) return;
     try {
-      const r = await fetch(`${getServer()}/memories?character=${encodeURIComponent(character)}`);
+      const r = await fetch(`${getServer()}/memories?persona=${encodeURIComponent(persona)}`);
       if (!r.ok) return;
       const d = await r.json();
       setMemories((d.memories ?? []).filter((m: Mem) => SHOW_KINDS.includes(m.kind)));
     } catch { /* 后端未起，忽略 */ }
   }
 
-  useEffect(() => { if (character) load(); }, [character]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (persona) load(); }, [persona]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startEdit(m: Mem) {
     setExpanded(null); // 收起展开行，别跟编辑框抢空间
@@ -50,7 +50,7 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
 
   async function saveEdit() {
     if (!editing || !editing.text.trim()) { setEditing(null); return; }
-    await fetch(`${getServer()}/memories/${editing.id}?character=${encodeURIComponent(character)}`, {
+    await fetch(`${getServer()}/memories/${editing.id}?persona=${encodeURIComponent(persona)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: editing.text.trim() }),
@@ -66,7 +66,7 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
   }
 
   async function remove(m: Mem) {
-    await fetch(`${getServer()}/memories/${m.id}?character=${encodeURIComponent(character)}`, { method: 'DELETE' });
+    await fetch(`${getServer()}/memories/${m.id}?persona=${encodeURIComponent(persona)}`, { method: 'DELETE' });
     setDeleting(null);
     load();
   }
@@ -82,7 +82,7 @@ export default function MemoryLibrary({ character, onClose }: { character: strin
     <div className="overlay" onClick={onClose}>
       <div className="panel lib-panel" onClick={(e) => e.stopPropagation()}>
         <div className="panel-h">
-          <h3>📓 记忆库{character ? ` · ${character}` : ''}</h3>
+          <h3>📓 记忆库{persona ? ` · ${persona}` : ''}</h3>
           <button className="panel-close" onClick={onClose}>✕</button>
         </div>
         <div className="lib-tools">

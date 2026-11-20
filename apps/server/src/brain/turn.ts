@@ -117,9 +117,9 @@ export async function planTurn(deps: TurnDeps, input: TurnInput): Promise<TurnPl
   };
 }
 
-// 非流式：一次拿到完整 segments（run-demo / eval 用）。
+// 非流式：一次拿到完整 segments（run-demo / eval 用）。命名加 NonStreaming 以区别于生产热路径 planTurn。
 // 与生产共用同一套消息装配（buildTurnMessages）+ 流式出句（streamMessages），只差召回为空、不接 TTS。
-export async function turn(deps: TurnDeps, input: TurnInput): Promise<TurnResultWithMood> {
+export async function runTurnNonStreaming(deps: TurnDeps, input: TurnInput): Promise<TurnResultWithMood> {
   const plan = await planTurn(deps, input);
   const messages = buildTurnMessages(emptyRecall(), 0, {
     text: input.text,

@@ -9,9 +9,9 @@ export type OfferResult = { sdp: string } | { error: string; status: number };
 export type RouterDeps = {
   contacts: { list(): Promise<string[]>; add(name: string): Promise<string[]>; remove(name: string): Promise<string[]> };
   memory: MemoryStore;
-  transcript: { list(character: string, userId: string, opts: { since?: string; limit?: number }): Promise<unknown[]> };
+  transcript: { list(personaName: string, userId: string, opts: { since?: string; limit?: number }): Promise<unknown[]> };
   userId: string;
-  defaultCharacter: () => string; // 当前 persona.name（无 ?character 时的回退）
+  defaultPersona: () => string; // 当前 persona.name（无 ?persona 时的回退）
   onRtcOffer: (body: OfferBody) => Promise<OfferResult>;
 };
 
@@ -68,28 +68,28 @@ export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: Serv
       return;
     }
 
-    // 笔记本 / 记忆库：跨型列出某伙伴的未归档记忆（?character=姓名&since=ISO&kind=类型）。
+    // 笔记本 / 记忆库：跨型列出某伙伴的未归档记忆（?persona=姓名&since=ISO&kind=类型）。
     if (req.method === 'GET' && req.url?.startsWith('/memories')) {
       try {
         const u = new URL(req.url, 'http://localhost');
-        const character = u.searchParams.get('character') ?? deps.defaultCharacter();
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
         const since = u.searchParams.get('since') ?? undefined;
         const kindParam = u.searchParams.get('kind');
         const kind = kindParam ? (kindParam as MemoryKind) : undefined;
-        sendJson(res, 200, { memories: await deps.memory.listAll(character, deps.userId, { kind, since }) });
+        sendJson(res, 200, { memories: await deps.memory.listAll(personaName, deps.userId, { kind, since }) });
       } catch (e) {
         sendJson(res, 500, { error: String(e) });
       }
       return;
     }
-    // 笔记本编辑：PATCH /memories/:id?character=姓名，body { content?, kind? }。
+    // 笔记本编辑：PATCH /memories/:id?persona=姓名，body { content?, kind? }。
     if (req.method === 'PATCH' && req.url?.startsWith('/memories/')) {
       try {
         const u = new URL(req.url, 'http://localhost');
         const id = u.pathname.slice('/memories/'.length);
-        const character = u.searchParams.get('character') ?? deps.defaultCharacter();
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
         const body = await readJson<{ content?: string; kind?: MemoryKind }>(req);
-        const m = await deps.memory.update(character, deps.userId, id, body);
+        const m = await deps.memory.update(personaName, deps.userId, id, body);
         if (!m) {
           sendJson(res, 404, { error: '记忆不存在' });
           return;
@@ -100,13 +100,13 @@ export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: Serv
       }
       return;
     }
-    // 笔记本删除：DELETE /memories/:id?character=姓名（软删除 superseded）。
+    // 笔记本删除：DELETE /memories/:id?persona=姓名（软删除 superseded）。
     if (req.method === 'DELETE' && req.url?.startsWith('/memories/')) {
       try {
         const u = new URL(req.url, 'http://localhost');
         const id = u.pathname.slice('/memories/'.length);
-        const character = u.searchParams.get('character') ?? deps.defaultCharacter();
-        sendJson(res, 200, { removed: await deps.memory.remove(character, deps.userId, id) });
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
+        sendJson(res, 200, { removed: await deps.memory.remove(personaName, deps.userId, id) });
       } catch (e) {
         sendJson(res, 500, { error: String(e) });
       }
@@ -117,12 +117,12 @@ export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: Serv
     if (req.method === 'GET' && req.url?.startsWith('/export/chat')) {
       try {
         const u = new URL(req.url, 'http://localhost');
-        const character = u.searchParams.get('character') ?? deps.defaultCharacter();
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
         const since = u.searchParams.get('since') ?? undefined;
         const limitParam = u.searchParams.get('limit');
         const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 2000) : undefined;
-        const turns = await deps.transcript.list(character, deps.userId, { since, limit });
-        sendJson(res, 200, { character, exportedAt: new Date().toISOString(), count: turns.length, turns });
+        const turns = await deps.transcript.list(personaName, deps.userId, { since, limit });
+        sendJson(res, 200, { personaName, exportedAt: new Date().toISOString(), count: turns.length, turns });
       } catch (e) {
         sendJson(res, 500, { error: String(e) });
       }

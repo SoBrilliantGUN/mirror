@@ -196,7 +196,7 @@ export function formatHistory(history: HistoryEntry[]): string {
 //   [ASKED]            ← recentAsked
 //   [ANSWERED]         ← lastAskedQuestion
 //   【对方这一轮】       ← text + vocalizations
-export function buildLayeredUserPrompt(input: {
+export type LayeredPromptInput = {
   mode: Mode;
   stance: Stance;
   emotion: EmotionTag;
@@ -222,7 +222,9 @@ export function buildLayeredUserPrompt(input: {
   selfAddedBlock?: string; // [SELF_ADDED] 人设增补块（永久固化 + 强制一致，空则省略）
   text: string;
   vocalizations?: VocalizationEvent[];
-}): string {
+};
+
+export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
   const parts: string[] = [];
 
   const memory = formatMemoryBlock(input.memories, input.memoryBudget);
