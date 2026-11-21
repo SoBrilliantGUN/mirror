@@ -20,11 +20,11 @@ type DreamRun = {
 // 把一次做梦实际做的事，翻成一行行人话。
 function describeDetails(d: DreamDetails): string[] {
   const lines: string[] = [];
-  for (const f of d.states) lines.push(`记下近况：${f}`);
-  for (const i of d.identity) lines.push(`身份：${i.field} = ${i.value}`);
-  for (const p of d.profile) lines.push(`观察到：${p}`);
-  for (const m of d.merged) lines.push(`合并了重复：${m}`);
-  for (const r of d.resolved) lines.push(`清理了过时：${r}`);
+  for (const f of d.states ?? []) lines.push(`记下近况：${f}`);
+  for (const i of d.identity ?? []) lines.push(`身份：${i.field} = ${i.value}`);
+  for (const p of d.profile ?? []) lines.push(`观察到：${p}`);
+  for (const m of d.merged ?? []) lines.push(`合并了重复：${m}`);
+  for (const r of d.resolved ?? []) lines.push(`清理了过时：${r}`);
   return lines;
 }
 
