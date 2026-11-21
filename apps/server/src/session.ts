@@ -509,7 +509,6 @@ export class CallSession {
         this.turnTaking.clearVocalTimer();
         this.backchannel.onTurnEnd();
         this.turnTaking.captureTurn(cleanText, vocals, dominantVocal);
-        this.rtc?.sendControl({ type: 'transcript', role: 'user', text: cleanText });
         this.lastRawAsrText = t; // 记 ASR 原文，供 transcript 落三版
         this.respond(cleanText, vocals, dominantVocal).catch(console.error);
       }
@@ -583,6 +582,8 @@ export class CallSession {
       this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.llm.generateModel, userText, formatHistory(this.history.slice(-6)), { personaName: this.persona.name, userName: this.cfg.userName || undefined })),
     ]);
     if (!this.gate.isCurrent(myGen)) return;
+    // 用户消息只显示最终版：正文纠错完成后立即推给前端（不再先显示 ASR 原文再替换）。
+    this.rtc?.sendControl({ type: 'transcript', role: 'user', text: corrected });
     this.mood = plan.mood;
     this.lastAffect = plan.affect;
     const disinterest = evaluateDisinterest(plan.affect.arousal, this.turnTaking.replyLatencyMs, this.disinterestStreak);
@@ -820,8 +821,6 @@ export class CallSession {
     const agentText = fullText.trim();
     if (agentText) this.history.push({ kind: 'turn', role: 'agent', text: agentText });
     this.rtc?.end();
-    // 用户这一轮已由 onAsrResult 先发了原始 ASR 文本，这里把纠正后的原文回传替换它。
-    this.rtc?.sendControl({ type: 'transcript', role: 'user', text: userText, replace: true });
     this.obs.setOutput(agentText);
     const asked = awaitsResponse !== null ? awaitsResponse : isAsking(agentText);
     this.recordTranscript('user', userText, {

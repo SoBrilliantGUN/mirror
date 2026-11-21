@@ -7,6 +7,18 @@ const TTS_MAX_ATTEMPTS = 3;
 const TTS_NETWORK_BACKOFF_MS = 600;
 const TTS_RATELIMIT_BACKOFF_MS = 2000;
 
+// TTS 易读替换表：生僻字/易念错的字 → 同音常用字。只影响「念出来」的发音，不影响落库/回看显示的原文。
+const TTS_EASY_READ: Record<string, string> = {
+  渔: '鱼', // 「渔」生僻，CosyVoice 会把「渔歌」念成 yegeten，换同音的「鱼」
+};
+
+// 把句子里的易念错字换成同音常用字，喂给 TTS 念。
+function toTtsText(text: string): string {
+  let out = text;
+  for (const [from, to] of Object.entries(TTS_EASY_READ)) out = out.replaceAll(from, to);
+  return out;
+}
+
 export type TtsEndpoint = { url: string; key: string };
 
 // 从配置拼出（主端点 + 可选兜底端点）。
@@ -33,6 +45,7 @@ export class TtsEngine {
 
   // 整句合成：先缓冲完整句再一次性进队列（逐句顺序放，避免「来一段放一段」的流式卡顿）。
   async synthesize(params: Omit<RealtimeTTSInput, 'wsUrl' | 'apiKey'>): Promise<void> {
+    const text = toTtsText(params.text); // 易读替换：只改念的字，不影响落库/回看原文
     let lastErr: unknown = null;
     for (let i = 0; i < this.endpoints.length; i++) {
       const ep = this.endpoints[i];
@@ -41,7 +54,7 @@ export class TtsEngine {
         try {
           this.onStart();
           const acc: Uint8Array[] = [];
-          for await (const pcm of streamTTS({ ...params, wsUrl: ep.url, apiKey: ep.key })) {
+          for await (const pcm of streamTTS({ ...params, text, wsUrl: ep.url, apiKey: ep.key })) {
             if (params.signal?.aborted) break;
             acc.push(pcm);
           }
