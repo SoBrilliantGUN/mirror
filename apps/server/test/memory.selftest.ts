@@ -15,7 +15,7 @@ import {
 import { compressHistory, pickLevel, estimateHistoryTokens, historyToText } from '../src/brain/compress';
 import { parseDetail, formatPersonaBlock, type PersonaDetail } from '../src/persona/loadPersona';
 import { cosine } from '../src/vector';
-import { parseExtraction, parseRetraction } from '../src/brain/consolidate/memoryTurn';
+import { parseExtraction, parseRetraction, isGroundedInUserText } from '../src/brain/consolidate/memoryTurn';
 import { mergeRecalled } from '../src/brain/assemble';
 
 let passed = 0;
@@ -106,6 +106,20 @@ ok('非法 kind 被过滤', () => {
   assert.equal(r[0].content, 'y');
 });
 ok('纯垃圾 → 空', () => assert.equal(parseExtraction('你好').length, 0));
+
+console.log('isGroundedInUserText（只从用户发言提取的接地检查）');
+ok('用户原话命中 → 保留', () => {
+  assert.equal(isGroundedInUserText('对方喜欢吃火锅', '我喜欢吃火锅'), true);
+});
+ok('AI 打招呼叫名字、用户没提 → 丢弃', () => {
+  assert.equal(isGroundedInUserText('对方叫做张渔歌', '你好呀明悦'), false);
+});
+ok('AI 猜测、用户只说「对啊」→ 丢弃', () => {
+  assert.equal(isGroundedInUserText('对方在准备考研', '对啊'), false);
+});
+ok('用户亲口说 → 保留', () => {
+  assert.equal(isGroundedInUserText('对方在准备考研', '我最近在准备考研'), true);
+});
 
 console.log('parseRetraction（纠正撤销解析）');
 ok('标准 retract 列表', () => {

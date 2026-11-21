@@ -16,8 +16,8 @@ import { MEMORY_KIND_GLOSS } from '../memoryTaxonomy';
 const EXTRACT_SYSTEM_PROMPT = `你是记忆抽取助手。读「对方这一轮说了什么 + 陪伴者这一轮回了什么」，从中抽出值得长期记住的、关于对方的内容。只输出 JSON，不要解释、不要 markdown。
 
 规则：
-1. 只抽「关于对方的稳定事实 / 反复表达的偏好 / 重要事件」，第三人称、一句话、具体不空泛。对方的事实只能来自【对方这一轮】。
-2. 【我这一轮】是陪伴者（你自己的人设）说的话，仅供理解语境，严禁从中抽取任何内容。陪伴者用第一人称说的（如「我拍照」「我遛狗」「我做时尚博主」）是他自己的事，绝不能写成「对方…」；陪伴者的猜测/追问（「是不是…」「可能…」「你是在…吧」）也不是对方说过的，不得写成对方的事实。
+1. **只从【对方这一轮】抽取**——对方的事实/偏好/事件，只能来自对方自己亲口说的话。宁缺毋滥：对方没明说的就别记。
+2. **【我这一轮】是陪伴者自己说的话，一个字都不能抽**。哪怕陪伴者打招呼叫了对方的名字（如「渔歌你好」）、或陈述了对对方的猜测/推断（如「你在准备考研吧」「你是不是很累」），也**绝不能**写成「对方…」——那些是陪伴者说的，不是对方说的。只有对方在【对方这一轮】里亲口说出的，才算对方的事实。
 3. 每句都记、琐碎寒暄不记。0~5 条，宁缺毋滥。
 4. kind 先自报（constraint / fact / preference / episodic / profile），系统会再核对一次。分类定义见：
 ${MEMORY_KIND_GLOSS}
@@ -41,6 +41,18 @@ function todayForPrompt(now: Date): string {
   const p = shanghaiParts(now);
   const wd = '一二三四五六日'[p.weekday - 1];
   return `${p.year}年${p.month}月${p.day}日（周${wd}）`;
+}
+
+// 只从用户发言提取的「接地」检查：记忆内容必须与用户原文有实质重叠（2 字及以上中文片段命中），
+// 否则视为从陪伴者的话里泄漏出来的（打招呼叫名字、AI 的猜测/推断），宁缺毋滥直接丢弃。
+export function isGroundedInUserText(content: string, userText: string): boolean {
+  const c = content.replace(/对方|TA|ta/g, '');
+  const u = userText ?? '';
+  for (let i = 0; i < c.length - 1; i++) {
+    const bigram = c.slice(i, i + 2);
+    if (/^[一-鿿]{2}$/.test(bigram) && u.includes(bigram)) return true;
+  }
+  return false;
 }
 
 // 一轮结束后异步写记忆：抽取 → 确定性分类兜底 → 落库。返回写入条数（观测用）。
@@ -68,7 +80,7 @@ export async function consolidateTurn(deps: {
       ],
       { model, temperature: 0, maxTokens: 500 },
     );
-    out = parseExtraction(raw);
+    out = parseExtraction(raw).filter((m) => isGroundedInUserText(m.content, userText));
     retract = parseRetraction(raw);
   } catch (e) {
     console.warn('[memory] 抽取失败，跳过：', e);
