@@ -329,3 +329,41 @@ button { font-family: inherit; }
   .app { grid-template-columns: 200px 1fr; }
   .book { display: none; }
 }
+
+/* —— 启动遮罩：整屏镜面大柔光漂移 + 呼吸（无文字），通讯录加载完淡出 —— */
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: #070812;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.7s ease;
+}
+.boot-overlay.boot-fading {
+  opacity: 0;
+  pointer-events: none;
+}
+.boot-pool {
+  position: absolute;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  filter: blur(80px);
+  will-change: transform, opacity;
+}
+.boot-pool.bp1 { width: 70vmax; height: 70vmax; left: -18vmax; top: -22vmax; background: radial-gradient(circle, rgba(91,106,191,0.55), transparent 62%); animation: boot-drift-a 8.5s ease-in-out infinite; }
+.boot-pool.bp2 { width: 62vmax; height: 62vmax; right: -20vmax; top: 4vmax; background: radial-gradient(circle, rgba(201,212,240,0.38), transparent 62%); animation: boot-drift-b 10.5s ease-in-out infinite; }
+.boot-pool.bp3 { width: 54vmax; height: 54vmax; left: 20vmax; bottom: -22vmax; background: radial-gradient(circle, rgba(114,130,215,0.4), transparent 64%); animation: boot-drift-c 9.5s ease-in-out infinite; }
+.boot-pool.bp4 { width: 40vmax; height: 40vmax; left: 40vmax; top: 16vmax; background: radial-gradient(circle, rgba(201,212,240,0.24), transparent 60%); animation: boot-drift-b 7.5s ease-in-out infinite reverse; }
+.boot-pool.bp5 { width: 34vmax; height: 34vmax; left: -8vmax; top: 30vmax; background: radial-gradient(circle, rgba(91,106,191,0.28), transparent 62%); animation: boot-drift-a 11.5s ease-in-out infinite reverse; }
+.boot-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@keyframes boot-drift-a { 0%,100% { transform: translate(0,0) scale(1); opacity: 0.85; } 50% { transform: translate(7vmax,5vmax) scale(1.16); opacity: 1; } }
+@keyframes boot-drift-b { 0%,100% { transform: translate(0,0) scale(1); opacity: 0.75; } 50% { transform: translate(-6vmax,-6vmax) scale(1.12); opacity: 0.95; } }
+@keyframes boot-drift-c { 0%,100% { transform: translate(0,0) scale(1); opacity: 0.8; } 50% { transform: translate(-5vmax,7vmax) scale(1.1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .boot-pool { animation: none; } }

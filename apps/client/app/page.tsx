@@ -42,6 +42,9 @@ export default function Page() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [contactsLoading, setContactsLoading] = useState(true);
+  // 启动遮罩：通讯录加载完成后淡出揭开
+  const [bootVisible, setBootVisible] = useState(true);
+  const [bootFading, setBootFading] = useState(false);
   // 笔记本侧栏的行内编辑 / 删除二次确认（Electron 不支持 prompt/confirm）
   const [editingMem, setEditingMem] = useState<{ id: string; text: string } | null>(null);
   const [deletingMem, setDeletingMem] = useState<string | null>(null);
@@ -72,11 +75,20 @@ export default function Page() {
         const m: Record<string, boolean> = {};
         (d.names ?? []).forEach((n) => (m[n] = true));
         setAdded(m);
+        // 默认选中第一个人物（列表顺序第一个）
+        const firstName = COMPANIONS.find((c) => m[c.name])?.name;
+        if (firstName) setSelected((prev) => prev ?? firstName);
         setContactsLoading(false);
+        setBootFading(true);
+        setTimeout(() => setBootVisible(false), 700);
       } catch {
         if (cancelled) return;
         if (attempt < 20) timer = setTimeout(() => load(attempt + 1), 500);
-        else setContactsLoading(false); // 重试耗尽，结束 loading
+        else {
+          setContactsLoading(false); // 重试耗尽，结束 loading
+          setBootFading(true);
+          setTimeout(() => setBootVisible(false), 700);
+        }
       }
     };
     load(0);
@@ -202,6 +214,12 @@ export default function Page() {
 
   return (
     <>
+      {bootVisible && (
+        <div className={`boot-overlay${bootFading ? ' boot-fading' : ''}`}>
+          <div className="boot-pool bp1" /><div className="boot-pool bp2" /><div className="boot-pool bp3" /><div className="boot-pool bp4" /><div className="boot-pool bp5" />
+          <div className="boot-grain" />
+        </div>
+      )}
       <div className="blob b1" /><div className="blob b2" /><div className="blob b3" />
       <div className="topbar">
         <div className="tb-right">
