@@ -7,7 +7,7 @@
 | L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`coach.ts`（教练意图+Frame 状态机） |
 | L4 | 安全红线 | `safety.ts`（危机+过度依赖，独立小模型）、`crisisResources.ts`（热线资源） |
 | L5 | 状态 / 会话 / 记忆 | `modeTracker.ts`、`mood.ts`、`compress.ts`（历史压缩）、`recentSummary.ts`（跨通话概要）、`timeAnchor.ts`/`timeAware.ts`/`holiday.ts`/`timezone.ts`（时间感知）、`ontology.ts`（好奇心维度） |
-| 记忆「写」 | 后台巩固（不进热路径） | `consolidate/`（memoryTurn / goalTurn / selfAddTurn / dream / reflect / afterTurn） |
+| 记忆「写」 | 后台巩固（不进热路径） | `consolidate/`（`index.ts` 总入口 consolidateAfterTurn · memoryTurn · goalTurn · selfAddTurn · dream · reflect） |
 
 **情绪概念 5 连**：`Affect`（本轮瞬时分）→ `MoodState`（多轮 EMA）→ `Mode`（casual/careful）→ `Stance`（陪/引）→ `EmotionTag`（TTS 语气）。详见 `packages/contracts/src/affect.ts` 顶部对照表。
 
@@ -33,3 +33,18 @@ text + acoustic + vocalizations
 **四个「分类器」**（LLM 判 → 抽 JSON → 解析 → 兜底）共用 `classify.ts` 的 `classifyJson` 骨架：`farewell.ts`（道别）、`coach.ts`（教练意图）、`memoryClassifier.ts`（记忆分类）；`segmentEmotion.ts`（逐句情绪）是「只出一个词」的非 JSON 输出，单独实现。
 
 **热路径（每轮）**：`planTurn`（安全+打分+道别+教练意图并行）→ 召回（`recallContext`）→ 装配（`buildTurnMessages`）→ 流式出句（`streamMessages`）。记忆的「写」全部 fire-and-forget，不在热路径。
+
+---
+
+## 两处命名陷阱（新人必读）
+
+**1. `L` 编号只有一套：架构分层 L0–L8。**
+根 README 定义了 L0–L8 架构分层（L3=对话大脑、L4=安全红线、L5=状态/会话/记忆、L6=角色卡…）。代码注释里的 `L3/L4/L5` 一律指这套。
+曾经的「上下文窗口块」也用过一套 L0–L5（L0=system、L1=[STATE]、L2=[MEMORY]、L4=[REMINDER]、L5=历史），**两套 L 语义不同、现已合一**：窗口块统一改用 `[块名]` 指代（`[STATE]`/`[MEMORY]`/`[REMINDER]`/「历史」）。所以看到 `[X]` 是 prompt 里的块位置，看到 `L3/L4/L5` 是架构层。
+
+**2. `persona` 词根有三个义，别混。**
+- `Persona`（`contracts/persona.ts`）= 陪伴者角色（程书衡等）；`personaName` = 它的中文名，同时是「人物隔离」维度。
+- `profile`（记忆类型「人设」）= **关于用户**的稳定特质，与 `Persona` 无关。
+- `SelfAdded`（表名 `self_additions`）= **关于陪伴者自己**的软细节，独立于用户长期记忆。
+
+一句话：`profile` 记「用户是怎么样的人」，`SelfAdded` 记「陪伴者自己是怎么样的人」，两者都跟 `Persona`（角色）无直接关系。

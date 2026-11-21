@@ -36,7 +36,7 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
   return {
     async listActive(personaName, userId): Promise<SelfAdded[]> {
       const { rows } = await pool.query<Row>(
-        `SELECT * FROM persona_additions WHERE persona_name = $1 AND user_id = $2 AND active ORDER BY created_at ASC`,
+        `SELECT * FROM self_additions WHERE persona_name = $1 AND user_id = $2 AND active ORDER BY created_at ASC`,
         [personaName, userId],
       );
       return rows.map(toSelfAdded);
@@ -45,24 +45,24 @@ export function createSelfAddedStore(pool: Pool): SelfAddedStore {
     async write(personaName, userId, { category, content }): Promise<SelfAdded> {
       const id = randomUUID();
       await pool.query(
-        `INSERT INTO persona_additions (id, persona_name, user_id, category, content) VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO self_additions (id, persona_name, user_id, category, content) VALUES ($1, $2, $3, $4, $5)`,
         [id, personaName, userId, category, content],
       );
-      const { rows } = await pool.query<Row>(`SELECT * FROM persona_additions WHERE id = $1`, [id]);
+      const { rows } = await pool.query<Row>(`SELECT * FROM self_additions WHERE id = $1`, [id]);
       return toSelfAdded(rows[0]);
     },
 
     async touch(personaName, userId, ids): Promise<void> {
       if (ids.length === 0) return;
       await pool.query(
-        `UPDATE persona_additions SET mention_count = mention_count + 1, last_mentioned_at = now() WHERE persona_name = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
+        `UPDATE self_additions SET mention_count = mention_count + 1, last_mentioned_at = now() WHERE persona_name = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
         [personaName, userId, ids],
       );
     },
 
     async archiveStale(personaName, userId, ttlDays): Promise<number> {
       const { rows } = await pool.query<{ id: string }>(
-        `UPDATE persona_additions SET active = false
+        `UPDATE self_additions SET active = false
           WHERE persona_name = $1 AND user_id = $2 AND active
             AND last_mentioned_at < now() - make_interval(days => $3)
           RETURNING id`,

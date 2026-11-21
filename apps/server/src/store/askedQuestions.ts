@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 
 // 近 3 天已问过的问题（防重复提问）：每次陪伴者以问句结尾，就把这句问句记一条。
-// 按 character/user 隔离，提问前拉最近 3 天的问题注入 [ASKED]，让模型别重复问。
+// 按人物/用户隔离，提问前拉最近 3 天的问题注入 [ASKED]，让模型别重复问。
 export function createAskedQuestionsStore(pool: Pool) {
   return {
     async record(personaName: string, userId: string, question: string): Promise<void> {

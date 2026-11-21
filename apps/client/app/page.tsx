@@ -16,7 +16,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 // 笔记本展示的类型（含约束）
 const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
-const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
+const chipClass = (k: string) => k;
 
 const CallIcon = ({ size = 18 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">

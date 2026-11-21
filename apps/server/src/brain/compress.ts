@@ -1,7 +1,7 @@
 import type { DeepSeek } from '../llm/deepseek';
 import { estimateTokens, type HistoryEntry } from './context';
 
-// 上下文压缩（只打 L5 历史），参考 kima 的五级渐进压缩，但适配 companion 极简形态：
+// 上下文压缩（只打「历史对话」块），参考 kima 的五级渐进压缩，但适配 companion 极简形态：
 // 历史里没有重工具日志，故把 kima 的「TOOL_COMPRESS（工具结果内联压缩）」一级省略，
 // 保留 NONE / HISTORY_SUMMARY / TOPIC_SUMMARY / EMERGENCY 四级，按「历史超出预算的倍数」升级。
 // 摘要走 LLM（temperature=0），保留最近 N 轮逐字、更早的摘要成带内标记 `[xxx SUMMARY]`。
@@ -42,7 +42,7 @@ export function pickLevel(overflow: number): 'none' | 'history' | 'topic' | 'eme
   return 'emergency';
 }
 
-// 压缩历史：只压 L5。返回的列表满足「至多一条摘要、恒在最前」的不变量。
+// 压缩历史：只压「历史对话」块。返回的列表满足「至多一条摘要、恒在最前」的不变量。
 export async function compressHistory(
   entries: HistoryEntry[],
   budgetTokens: number,

@@ -16,10 +16,10 @@ import type {
 import { formatUserTurn, SAFETY_REMINDER } from './prompts';
 import { anchorLabel } from './timeAnchor';
 
-// 上下文分层装配器（L0–L5，参考 kima 的 context-window-layering.md）。
-// 适配 companion 的极简形态：L0 = system（人设+安全+记忆引导）、L1 = [STATE] 状态、
-// L2 = [MEMORY] 记忆、L4 = [REMINDER] 安全红线尾播、L5 = 历史对话（唯一压缩对象）。
-// 压缩只打 L5（见 compress.ts），其余层是固定成本。全部纯函数，可单测。
+// 上下文分层装配器：把一条 user prompt 按「位置」切成固定块（块名带 [] 前缀，供模型分界 + 代码锚点回捞）。
+//   system 段（人设+安全+记忆引导）→ [STATE] 状态 → [MEMORY] 记忆 → [REMINDER] 安全红线尾播 → 历史对话（唯一压缩对象）。
+// 压缩只打「历史对话」块（见 compress.ts），其余块是固定成本。全部纯函数，可单测。
+// 注意：这里的「分层」是 prompt 里的块位置，与 README 的架构分层 L0–L8 是两套编号，别混。
 
 // token 估算（启发式）：中文约 1 token / 1.5 字符，其余约 1 token / 4 字符。
 export function estimateTokens(text: string): number {
@@ -50,7 +50,7 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
   return { text: lines.join('\n'), used };
 }
 
-// L2 [MEMORY] 块：五型按 约束→人设→偏好→事实→情节 优先级（约束先拿足预算、人设强制在场），
+// [MEMORY] 块：五型按 约束→人设→偏好→事实→情节 优先级（约束先拿足预算、人设强制在场），
 // 按 token 预算贪心填充；空则返回空串。
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
@@ -75,7 +75,7 @@ export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number)
   return '[MEMORY]\n' + blocks.join('\n\n');
 }
 
-// L1 [STATE] 状态快照：轻量标量（不是完整 State JSON，噪音太大）。
+// [STATE] 状态快照：轻量标量（不是完整 State JSON，噪音太大）。
 export function formatStateBlock(s: {
   mode: Mode;
   stance: Stance;
@@ -170,12 +170,12 @@ export function buildGoalFollowUpHint(goals: GrowthGoal[]): string {
   return `[FOLLOW_UP] 对方之前有个进行中的课题「${g.title}」，上一步是「${g.will}」，之后没再提起。这一轮别急着开教练、别像查岗一样追问，就朋友般地自然带一句"上次说的那件事，后来怎么样了？"，看对方愿不愿接着往下说。`;
 }
 
-// L5 历史条目：要么是一轮对话（turn），要么是压缩摘要（summary，恒在最前）。
+// 历史条目：要么是一轮对话（turn），要么是压缩摘要（summary，恒在最前）。
 export type HistoryEntry =
   | { kind: 'turn'; role: 'user' | 'agent'; text: string }
   | { kind: 'summary'; marker: string; text: string };
 
-// L5 历史（已压缩后）格式化。多轮改造后，逐字 turn 走原生消息、这里通常只剩摘要：
+// 历史（已压缩后）格式化。多轮改造后，逐字 turn 走原生消息、这里通常只剩摘要：
 // 只剩摘要时标成「更早对话摘要」，避免被误当成逐字最近对话。
 export function formatHistory(history: HistoryEntry[]): string {
   if (history.length === 0) return '';
@@ -189,7 +189,7 @@ export function formatHistory(history: HistoryEntry[]): string {
   );
 }
 
-// 装配 L1+L2+L4+L5 为一条 user prompt（带内标记分界，供模型分界 + 代码锚点回捞）。
+// 装配 [STATE]+[MEMORY]+[REMINDER]+历史 为一条 user prompt（带内标记分界，供模型分界 + 代码锚点回捞）。
 //
 // 块 ← 来源字段 对照表（改注入时先查这里）：
 //   [MEMORY]           ← memories + memoryBudget
@@ -240,7 +240,7 @@ export type LayeredPromptInput = TurnPromptSignals & {
   safetyBlock?: string; // [CRISIS_RESOURCES] 危机资源块（refer 时确定性注入，保证号码必现）
   memories: RecalledMemories;
   memoryBudget: number;
-  history: HistoryEntry[]; // 已经过压缩的 L5（多轮改造后只剩摘要；逐字 turn 走原生消息）
+  history: HistoryEntry[]; // 已经过压缩的历史（多轮改造后只剩摘要；逐字 turn 走原生消息）
   personaBlock?: string; // [PERSONA] 人物命中详情块（渐进式加载，空则省略）
   selfAddedBlock?: string; // [SELF_ADDED] 人设增补块（永久固化 + 强制一致，空则省略）
   identityBlock?: string; // [IDENTITY] 结构化身份块（字段→值，单值覆盖；空则省略）
@@ -295,7 +295,7 @@ export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
     parts.push(input.safetyBlock); // refer 时的确定性危机资源（与 SAFETY_REMINDER 一前一后夹住）
   }
 
-  parts.push(SAFETY_REMINDER); // L4 尾部重放（首尾三明治的「尾」）
+  parts.push(SAFETY_REMINDER); // [REMINDER] 尾部重放（首尾三明治的「尾」）
   // 约束（硬规则/红线）也在尾部重放一遍——头部 [MEMORY] 已有一遍，这里再强调，防 lost-in-the-middle。
   const constraintReminder = formatConstraintReminder(input.memories.constraint);
   if (constraintReminder) parts.push(constraintReminder);

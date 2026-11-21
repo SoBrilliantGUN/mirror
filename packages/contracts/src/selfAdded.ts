@@ -1,7 +1,7 @@
 // —— 人设增补（陪伴者底座之外的软细节，永久固化 + 提及驱动衰减）——
 // 数据：每条 = 陪伴者在对话中自然说出的、关于他自己的软细节（爱好/口味/小回忆/习惯）。
 // 铁律：底座不可推翻（角色卡写死）、增量一经写出强制一致、只补软细节。
-// 注意：本类型 SelfAdded 在 DB 里的表名是 persona_additions（见 store/db.ts）——表名沿用旧词「persona」，别跟记忆类型 profile（关于用户）混淆。
+// 表名 self_additions（见 store/db.ts），与类型 SelfAdded 同名对齐。
 export type SelfAdded = {
   id: string;
   userId: string;

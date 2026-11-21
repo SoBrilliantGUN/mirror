@@ -5,31 +5,11 @@ export function createPool(databaseUrl: string): Pool {
   return new Pool({ connectionString: databaseUrl });
 }
 
-// 统一「哪个陪伴者」的列名：老库叫 character_id，现统一 persona_name（与 TS 侧 personaName 对齐）。
-// 幂等：只有 from 还在、to 还没建时才 rename；新库直接以 persona_name 建表，走不到这一步。
-async function renameColumn(pool: Pool, table: string, from: string, to: string): Promise<void> {
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = '${table}' AND column_name = '${from}')
-         AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = '${table}' AND column_name = '${to}') THEN
-        ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to};
-      END IF;
-    END $$;
-  `);
-}
-
-// 建表（幂等）。通讯录一张表 + 长期记忆一张表（pgvector 向量）；以后 MBTI / 关系层都加在这里。
+// 建表（幂等）。第一版、无历史数据，所有表都直接建最终 schema，不带任何存量迁移。
 export async function ensureSchema(pool: Pool): Promise<void> {
   // pgvector（向量余弦检索）+ pg_trgm（中文词法相似度，混合召回的 lexical 腿）
   await pool.query(`CREATE EXTENSION IF NOT EXISTS vector`);
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
-
-  // 迁移：老库列名 character_id → persona_name（幂等，见 renameColumn）。必须跑在所有建表/建索引之前——
-  // 否则老库里还叫 character_id，后边的 CREATE INDEX ... (persona_name) 会报「列不存在」。
-  for (const t of ['call_sessions', 'memories', 'persona_additions', 'growth_goals', 'asked_questions', 'conversation_summaries', 'call_turns']) {
-    await renameColumn(pool, t, 'character_id', 'persona_name');
-  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
@@ -59,8 +39,13 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       kind text NOT NULL,                -- constraint | fact | preference | episodic | profile
       content text NOT NULL,
       entity_id text,                    -- fact 的稳定实体键（如 user:job），空则不按实体覆盖
+      dimension text,                    -- 好奇心维度（原生家庭/职业/…）；constraint/profile 为空
+      aspect text,                       -- 维度下的子槽（原生家庭→母亲）；没有则空
       embedding vector(1024),            -- 与 EMBEDDING_DIM 对齐（默认 1024）
       ttl_days int,                      -- episodic 默认 30；其余空（不衰减）
+      anchor_kind text,                  -- 时间锚点：absolute → anchor_at；periodic → anchor_rule
+      anchor_at date,
+      anchor_rule jsonb,
       access_count int NOT NULL DEFAULT 0,
       last_access timestamptz,
       superseded boolean NOT NULL DEFAULT false,
@@ -71,27 +56,12 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
 
-  // 迁移：老库的 memories 只有 user_id（所有人物共享一份画像）。补 persona_name 并把存量回填到默认人物程书衡。
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS persona_name text NOT NULL DEFAULT '程书衡'`);
-  // 好奇心维度（原生家庭/职业/…），fact/preference/episodic 归入，constraint/persona 为空。
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS dimension text`);
-  // 维度下的子槽（原生家庭→母亲等），边级延伸用；没有则空。
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS aspect text`);
-  // 时间锚点（L5 时间感知）：记忆里的时间只能是绝对或周期，禁止相对。absolute→anchor_at；periodic→anchor_rule。
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_kind text`);
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_at date`);
-  await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS anchor_rule jsonb`);
-
-  // 迁移：记忆类型「人设」曾叫 insight、后叫 persona，现统一为 profile（区分于陪伴者 Persona）。
-  await pool.query(`UPDATE memories SET kind = 'profile' WHERE kind IN ('insight', 'persona')`);
-
   // 向量检索（HNSW 近似最近邻，只索引有向量的行）+ 按人物/用户/类型过滤 + 词法相似度
   await pool.query(`
     CREATE INDEX IF NOT EXISTS memories_embedding_idx ON memories
       USING hnsw (embedding vector_cosine_ops)
   `);
-  await pool.query(`DROP INDEX IF EXISTS memories_user_kind_idx`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS memories_character_user_kind_idx ON memories (persona_name, user_id, kind)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS memories_persona_user_kind_idx ON memories (persona_name, user_id, kind)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS memories_content_trgm_idx ON memories USING gin (content gin_trgm_ops)`);
   // 时间锚点查询（临近/当天重要日期）：只索引绝对日期（周期走 jsonb 评估）。
   await pool.query(`
@@ -101,9 +71,9 @@ export async function ensureSchema(pool: Pool): Promise<void> {
 
   // 人设增补：陪伴者底座之外的软细节（爱好/口味/小回忆/习惯）。独立于用户长期记忆，
   // 按 persona_name + user_id 隔离。提及驱动衰减：last_mentioned_at 越久越旧、archiveStale 归档。
-  // 表名 persona_additions 对应 TS 类型 SelfAdded（contracts/selfAdded.ts）——「persona」是旧词，别与记忆类型 profile（关于用户）混淆。
+  // 表名 self_additions 对应 TS 类型 SelfAdded（contracts/selfAdded.ts），与「关于用户」的记忆类型 profile 无关。
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS persona_additions (
+    CREATE TABLE IF NOT EXISTS self_additions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id text NOT NULL,
       persona_name text NOT NULL,
@@ -115,7 +85,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS persona_additions_char_user_idx ON persona_additions (persona_name, user_id, active)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS self_additions_persona_user_idx ON self_additions (persona_name, user_id, active)`);
 
   // 成长课题（Life Coach 的「重骨架」）：GROW 四段 + 生命周期，跨通话持久、按人物/用户隔离。
   // status：active（进行中，注入 [GOAL] 块）/ done（做成，庆祝后）/ archived（放下，可回溯不硬删）。
@@ -137,9 +107,9 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS growth_goals_char_user_idx ON growth_goals (persona_name, user_id, status)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS growth_goals_persona_user_idx ON growth_goals (persona_name, user_id, status)`);
 
-  // 近 3 天已问过的问题（防重复提问）：每次提问记录一条，按 character/user 隔离。
+  // 近 3 天已问过的问题（防重复提问）：每次提问记录一条，按人物/用户隔离。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS asked_questions (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -149,9 +119,9 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       asked_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS asked_questions_char_user_time_idx ON asked_questions (persona_name, user_id, asked_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS asked_questions_persona_user_time_idx ON asked_questions (persona_name, user_id, asked_at DESC)`);
 
-  // 最近对话概要（跨通话的「最近聊过什么」）：每次通话结束记一条话题脉络，按 character/user 隔离。
+  // 最近对话概要（跨通话的「最近聊过什么」）：每次通话结束记一条话题脉络，按人物/用户隔离。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS conversation_summaries (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -161,7 +131,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS conversation_summaries_char_user_time_idx ON conversation_summaries (persona_name, user_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS conversation_summaries_persona_user_time_idx ON conversation_summaries (persona_name, user_id, created_at DESC)`);
 
   // 逐轮聊天记录（导出/优化用）：正文 + 每轮元数据（情绪/声学/哭笑事件/延迟/框架/是否问句）。
   await pool.query(`
@@ -186,7 +156,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS call_turns_char_user_time_idx ON call_turns (persona_name, user_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS call_turns_persona_user_time_idx ON call_turns (persona_name, user_id, created_at DESC)`);
 
   // 结构化身份（做梦时反思抽取）：field→value 单值覆盖，不做自由文本记忆。字段名动态（中文名/昵称/宠物…）。
   await pool.query(`
@@ -215,6 +185,5 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-  await pool.query(`ALTER TABLE dream_runs ADD COLUMN IF NOT EXISTS details jsonb`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS dream_runs_char_user_time_idx ON dream_runs (persona_name, user_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS dream_runs_persona_user_time_idx ON dream_runs (persona_name, user_id, created_at DESC)`);
 }

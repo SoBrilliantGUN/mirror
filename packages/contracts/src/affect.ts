@@ -38,7 +38,7 @@ export type TurnResult = {
   frame?: Frame;            // 本轮交互框架（friend/coach，教练改造后新增；缺省回退 friend）
 };
 
-// —— 副语言（L0 上行，喂给 call1 打分）——
+// —— 副语言（音频上行，喂给 call1 打分）——
 export type AcousticFeatures = {
   rateZ: number;      // 语速 z-score（正 = 偏快）
   pitchZ: number;     // 音高 z-score

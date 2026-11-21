@@ -43,7 +43,7 @@ export type RecalledMemories = {
 export interface MemoryStore {
   // 每个方法的第一个参数 personaName = 当前陪伴者（persona.name），按人物隔离用户画像：
   // 程书衡不会读到只告诉沈知遥的事。见 store/memory.ts。
-  // 混合召回：constraint 全量 + fact/preference/episodic 语义检索（供每轮 L2 注入）。
+  // 混合召回：constraint 全量 + fact/preference/episodic 语义检索（供每轮 [MEMORY] 块注入）。
   recall(personaName: string, userId: string, query: string): Promise<RecalledMemories>;
   // 语义检索（recall_memory 工具按需读）。
   search(personaName: string, userId: string, query: string, kind?: MemoryKind, topK?: number): Promise<Memory[]>;

@@ -6,7 +6,7 @@
   --fact: #3b82f6;
   --pref: #f59e0b;
   --epi: #8b5cf6;
-  --persona: #ec4899;
+  --profile: #ec4899;
   --danger: #e5484d;
   --glass: rgba(255, 255, 255, 0.55);
   --glass-strong: rgba(255, 255, 255, 0.75);
@@ -163,7 +163,7 @@ button { font-family: inherit; }
 .mh { display: flex; align-items: center; gap: 8px; }
 .chip { font-size: 10px; padding: 2px 8px; border-radius: 999px; color: #fff; font-weight: 600; letter-spacing: 0.5px; }
 .chip.fact { background: var(--fact); } .chip.preference { background: var(--pref); }
-.chip.episodic { background: var(--epi); } .chip.persona, .chip.insight { background: var(--persona); }
+.chip.episodic { background: var(--epi); } .chip.profile { background: var(--profile); }
 .chip.constraint { background: #64748b; }
 .del {
   margin-left: auto; border: 0; background: none; color: #b9bfcc; cursor: pointer;
@@ -217,7 +217,7 @@ button { font-family: inherit; }
 .tab[data-k="fact"].active { background: var(--fact); }
 .tab[data-k="preference"].active { background: var(--pref); }
 .tab[data-k="episodic"].active { background: var(--epi); }
-.tab[data-k="profile"].active { background: var(--persona); }
+.tab[data-k="profile"].active { background: var(--profile); }
 .tab[data-k="constraint"].active { background: #64748b; }
 
 /* ===== 记忆库弹层（表格视图） ===== */

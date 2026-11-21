@@ -11,7 +11,7 @@ const KIND_LABEL: Record<string, string> = {
   fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
 };
 const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
-const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
+const chipClass = (k: string) => k;
 const TABS: { key: Filter; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'constraint', label: '约束' },
