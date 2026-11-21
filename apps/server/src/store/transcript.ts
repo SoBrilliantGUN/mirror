@@ -20,6 +20,7 @@ export type TurnInsert = {
   mode?: string | null;
   stance?: string | null;
   asked?: boolean | null;
+  curiosity?: unknown; // 好奇心评分明细（换话题/静默时挑推荐话题的计算过程）
 };
 
 export type TurnRow = {
@@ -40,6 +41,7 @@ export type TurnRow = {
   mode: string | null;
   stance: string | null;
   asked: boolean | null;
+  curiosity: unknown;
   createdAt: string;
 };
 
@@ -48,8 +50,8 @@ export function createTranscriptStore(pool: Pool) {
     async insert(personaName: string, userId: string, t: TurnInsert): Promise<void> {
       await pool.query(
         `INSERT INTO call_turns
-           (persona_name, user_id, session_id, role, text, raw_text, name_corrected, turn_index, emotion, affect, acoustic, vocals, recalled, latency_ms, frame, mode, stance, asked)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+           (persona_name, user_id, session_id, role, text, raw_text, name_corrected, turn_index, emotion, affect, acoustic, vocals, recalled, latency_ms, frame, mode, stance, asked, curiosity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           personaName,
           userId,
@@ -69,6 +71,7 @@ export function createTranscriptStore(pool: Pool) {
           t.mode ?? null,
           t.stance ?? null,
           t.asked ?? null,
+          t.curiosity ? JSON.stringify(t.curiosity) : null,
         ],
       );
     },
@@ -87,7 +90,7 @@ export function createTranscriptStore(pool: Pool) {
       const limit = opts?.limit && opts.limit > 0 ? Math.min(opts.limit, 10000) : 2000;
       params.push(limit);
       const { rows } = await pool.query(
-        `SELECT id, session_id, role, text, raw_text, name_corrected, turn_index, emotion, affect, acoustic, vocals, recalled, latency_ms, frame, mode, stance, asked, created_at
+        `SELECT id, session_id, role, text, raw_text, name_corrected, turn_index, emotion, affect, acoustic, vocals, recalled, latency_ms, frame, mode, stance, asked, curiosity, created_at
            FROM call_turns
           WHERE ${where}
           ORDER BY created_at ASC, turn_index ASC
@@ -112,6 +115,7 @@ export function createTranscriptStore(pool: Pool) {
         mode: r.mode as string | null,
         stance: r.stance as string | null,
         asked: r.asked as boolean | null,
+        curiosity: r.curiosity,
         createdAt: r.created_at as string,
       }));
     },

@@ -155,6 +155,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       mode text,                          -- casual | careful
       stance text,                        -- guide | accompany
       asked boolean,                      -- agent 这句是否在等回应
+      curiosity jsonb,                    -- 好奇心评分明细（换话题时挑推荐话题的计算过程）
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
@@ -162,6 +163,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
   // 迁移：老库的 call_turns 没有 raw_text/name_corrected 两列（三版改动前建的），幂等补上。
   await pool.query(`ALTER TABLE call_turns ADD COLUMN IF NOT EXISTS raw_text text`);
   await pool.query(`ALTER TABLE call_turns ADD COLUMN IF NOT EXISTS name_corrected text`);
+  await pool.query(`ALTER TABLE call_turns ADD COLUMN IF NOT EXISTS curiosity jsonb`);
 
   // 结构化身份（做梦时反思抽取）：field→value 单值覆盖，不做自由文本记忆。字段名动态（中文名/昵称/宠物…）。
   await pool.query(`

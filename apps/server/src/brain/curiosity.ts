@@ -14,6 +14,17 @@ export type CuriosityPick = {
   material: string;
 };
 
+// 每个维度的评分明细（记录进聊天记录，便于后续调权重）。
+export type ScoredDimension = {
+  dimension: string;
+  understanding: number; // 了解程度（越低越好，这里已转成越高越好）
+  freshness: number;     // 新鲜感（越近越高）
+  interest: number;      // 兴趣（越深越高）
+  score: number;         // 三者简单相加
+};
+
+export type CuriosityResult = CuriosityPick & { scored: ScoredDimension[] };
+
 // 了解程度：覆盖数越少越高（0 覆盖 = 1，覆盖越多趋近 0）。
 function understandingScore(coverage: CoverageEntry[], dimension: string): number {
   const count = coverage.filter((c) => c.dimension === dimension).reduce((n, c) => n + c.count, 0);
@@ -45,18 +56,17 @@ export async function pickCuriosityTopic(deps: {
   latestEventAt: Map<string, string | null>; // dimension → 最新事件时间（YYYY-MM-DD 或 null）
   askedIds: Set<string>;
   rng?: () => number;
-}): Promise<CuriosityPick | null> {
+}): Promise<CuriosityResult | null> {
   const rng = deps.rng ?? Math.random;
   const dims = allTopicDimensions();
 
-  // 1. 每个维度算分（三值简单相加）
-  const scored = dims.map((d) => ({
-    dimension: d.dimension,
-    score:
-      understandingScore(deps.coverage, d.dimension) +
-      freshnessScore(deps.latestEventAt.get(d.dimension) ?? null) +
-      (deps.engagement.get(d.dimension) ?? 0),
-  }));
+  // 1. 每个维度算分（三值简单相加），明细一并保留供记录
+  const scored: ScoredDimension[] = dims.map((d) => {
+    const understanding = understandingScore(deps.coverage, d.dimension);
+    const freshness = freshnessScore(deps.latestEventAt.get(d.dimension) ?? null);
+    const interest = deps.engagement.get(d.dimension) ?? 0;
+    return { dimension: d.dimension, understanding, freshness, interest, score: understanding + freshness + interest };
+  });
 
   // 2. 加权随机选一个维度（分数全 0 时退化为均匀随机）
   const total = scored.reduce((n, s) => n + s.score, 0);
@@ -85,5 +95,5 @@ export async function pickCuriosityTopic(deps: {
   if (candidates.length === 0) return null;
 
   // 4. 随机选一个
-  return candidates[Math.floor(rng() * candidates.length)];
+  return { ...candidates[Math.floor(rng() * candidates.length)], scored };
 }

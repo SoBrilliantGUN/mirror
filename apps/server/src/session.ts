@@ -82,7 +82,7 @@ import { createTranscriptStore, type TurnInsert } from './store/transcript';
 import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
 import { analyzeSessionTopics, refreshTopicLibrary } from './brain/topicLibrary';
-import { pickCuriosityTopic, latestEventByDimension, type CuriosityPick } from './brain/curiosity';
+import { pickCuriosityTopic, latestEventByDimension, type CuriosityPick, type CuriosityResult } from './brain/curiosity';
 import type { TopicsStore } from './store/topics';
 import type { AskedTopicsStore } from './store/askedTopics';
 
@@ -219,6 +219,7 @@ export class CallSession {
   private prevTurnMemoryIds: string[] = [];
   private recentVoiceAt = 0;
   private lastRawAsrText = ''; // 用户本轮 ASR 原始识别，供 transcript 落三版（raw/名字纠正后/最终）
+  private lastCuriosityTrace: { scored: unknown[]; pickedId: string; pickedQuestion: string } | null = null; // 好奇心评分明细，供落库
   private userGender: '男' | '女' | null = null;
 
   // 主动发话 / 打断 / 收尾状态机（从本类抽出；跨模块共享状态见其 public 字段）
@@ -619,6 +620,7 @@ export class CallSession {
       const pick = await this.pickRecommendedTopic();
       if (pick) {
         recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+        this.lastCuriosityTrace = { scored: pick.scored, pickedId: pick.id, pickedQuestion: pick.question };
         void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
       }
     }
@@ -724,6 +726,7 @@ export class CallSession {
         const pick = await this.pickRecommendedTopic();
         if (pick) {
           recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+          this.lastCuriosityTrace = { scored: pick.scored, pickedId: pick.id, pickedQuestion: pick.question };
           void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
         }
       }
@@ -893,6 +896,7 @@ export class CallSession {
     if (agentText) {
       this.recordTranscript('agent', agentText, {
         emotion: plan.emotion,
+        curiosity: this.lastCuriosityTrace,
         recalled: {
           constraint: ctx.recalled.constraint.map((m) => ({ id: m.id, content: m.content })),
           profile: ctx.recalled.profile.map((m) => ({ id: m.id, content: m.content })),
@@ -907,6 +911,7 @@ export class CallSession {
         asked,
       });
     }
+    this.lastCuriosityTrace = null; // 记录完清空
     this.turnTaking.markAsked(asked);
     this.lastQuestionText = asked ? agentText : '';
     if (asked && agentText) this.askedQuestions.record(this.persona.name, this.userId, agentText).catch(() => {});
@@ -956,7 +961,7 @@ export class CallSession {
   }
 
   // 好奇心机制：三个值相加 → 加权随机选维度 → 维度下随机选未回答话题。
-  private async pickRecommendedTopic(): Promise<CuriosityPick | null> {
+  private async pickRecommendedTopic(): Promise<CuriosityResult | null> {
     try {
       const [coverage, engagement, anchored, askedIds] = await Promise.all([
         this.memory.getCoverage(this.persona.name, this.userId),
