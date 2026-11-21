@@ -4,12 +4,13 @@ import type { PersonaName } from './persona';
 // 字段语义提醒：本文件里所有 `personaName` 存的都是 `PersonaName`（陪伴者的中文名，如 "程书衡"），
 // 不是数字/UUID ID。它同时是「人物隔离」的维度——程书衡不会读到只告诉沈知遥的事。
 
-// —— 长期记忆（五型，参考 kima 的 CopilotMemory 分类；embedding + pgvector 混合召回）——
-// constraint = 硬规则/红线（无条件在场）；fact = 稳定事实（entity_id 覆盖）；
-// preference = 偏好/软规则；episodic = 带时间锚点的事件（默认 30 天衰减）；
+// —— 长期记忆（六型，参考 kima 的 CopilotMemory 分类；embedding + pgvector 混合召回）——
+// constraint = 硬规则/红线（无条件在场）；fact = 稳定事实（持久、entity_id 覆盖）；
+// state = 近况（可变当前状态/计划，会过时）；preference = 偏好/软规则；
+// episodic = 发生过的具体事件（默认 30 天衰减）；
 // profile = 特质（对方的稳定性格/价值观/长期模式 + 对对方的高层洞察，强制在场，单独成型）。
 // 注：与陪伴者实体 `Persona`（角色）无关——这是「关于用户」的记忆类型。
-export type MemoryKind = 'constraint' | 'fact' | 'preference' | 'episodic' | 'profile';
+export type MemoryKind = 'constraint' | 'fact' | 'state' | 'preference' | 'episodic' | 'profile';
 
 export type Memory = {
   id: string;
@@ -31,11 +32,12 @@ export type Memory = {
 // 好奇心覆盖率的一行：某维度下某子槽的已知事实数（aspect 为 null = 只归了维度、没归子槽）。
 export type CoverageEntry = { dimension: string; aspect: string | null; count: number };
 
-// 分路召回结果：constraint + profile 硬召回全量（强制在场）；其余三型走混合召回（按相似度过滤）。
+// 分路召回结果：constraint + profile 硬召回全量（强制在场）；其余走混合召回（按相似度过滤）。
 export type RecalledMemories = {
   constraint: Memory[];
   profile: Memory[];
   fact: Memory[];
+  state: Memory[];
   preference: Memory[];
   episodic: Memory[];
 };

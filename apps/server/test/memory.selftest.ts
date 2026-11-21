@@ -25,10 +25,11 @@ function ok(name: string, fn: () => void) {
   console.log(`  ✓ ${name}`);
 }
 
-const recalled = (c: string[] = [], f: string[] = [], p: string[] = [], e: string[] = [], i: string[] = []): RecalledMemories => ({
+const recalled = (c: string[] = [], f: string[] = [], p: string[] = [], e: string[] = [], i: string[] = [], s: string[] = []): RecalledMemories => ({
   constraint: c.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'constraint' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   profile: i.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'profile' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   fact: f.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'fact' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
+  state: s.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'state' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   preference: p.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'preference' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
   episodic: e.map((x) => ({ id: x, userId: 'u', personaName: 'c', kind: 'episodic' as const, content: x, entityId: null, dimension: null, aspect: null, accessCount: 0, lastAccess: null, superseded: false, version: 1, createdAt: '' })),
 });
@@ -76,19 +77,19 @@ ok('特质在约束之后、事实之前', () => {
 });
 
 console.log('parseReflection（反思输出解析）');
-ok('标准 JSON → facts + profile', () => {
-  const r = parseReflection('{"facts":[{"content":"她在准备转行","entityId":"user:goal"}],"profile":["一提工作就唤醒飙升"]}');
-  assert.equal(r.facts.length, 1);
-  assert.equal(r.facts[0].content, '她在准备转行');
+ok('标准 JSON → states + profile', () => {
+  const r = parseReflection('{"states":[{"content":"她在准备转行","entityId":"user:goal"}],"profile":["一提工作就唤醒飙升"]}');
+  assert.equal(r.states.length, 1);
+  assert.equal(r.states[0].content, '她在准备转行');
   assert.equal(r.profile[0], '一提工作就唤醒飙升');
 });
 ok('包 markdown 代码块也能解析', () => {
-  const r = parseReflection('```json\n{"facts":[],"profile":["x"]}\n```');
+  const r = parseReflection('```json\n{"states":[],"profile":["x"]}\n```');
   assert.equal(r.profile[0], 'x');
 });
 ok('纯垃圾 → 空', () => {
   const r = parseReflection('你好');
-  assert.equal(r.facts.length, 0);
+  assert.equal(r.states.length, 0);
   assert.equal(r.profile.length, 0);
 });
 

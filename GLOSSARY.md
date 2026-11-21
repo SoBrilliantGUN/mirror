@@ -16,7 +16,7 @@
 |---|---|---|
 | 陪伴 / 对话 | `brain/turn` + `session` + `conversationFlow` | 轮次、Mode、Stance、EmotionTag |
 | 成长 / 教练 | `brain/coach` + `store/goals` | Frame、GROW、课题 |
-| 记忆 | `store/memory` + `brain/consolidate` | 五型 constraint/fact/preference/episodic/profile |
+| 记忆 | `store/memory` + `brain/consolidate` | 六型 constraint/fact/state/preference/episodic/profile |
 | 身份 | `store/identity` | IdentityField（结构化身份，单值覆盖） |
 | 角色 | `persona/` + `character/` | Persona、角色卡、voiceTint |
 | 安全 | `brain/safety` | 危机、过度依赖、转介 |
@@ -34,15 +34,16 @@
 | **Stance** | **单轮**内「陪(accompany) / 引(guide)」姿态，由支配度驱动 | 陪伴/对话 | 别和 Frame 混（都含「陪/引」，层级不同） |
 | **Frame** | **整段**对话「朋友(friend) / 教练(coach)」框架，走 GROW | 成长/教练 | 别和 Stance 混 |
 
-## 五型长期记忆（唯一分类定义）
+## 六型长期记忆（唯一分类定义）
 
 > 完整分类 prompt 见 `apps/server/src/brain/memoryTaxonomy.ts`；这里只记「中文名 → 含义」的权威版。
 
 1. **constraint（约束）** —— 硬规则 / 红线 / 禁令，无条件在场。
-2. **fact（事实）** —— 关于用户的可变事实 / 当前状态（entity 覆盖）。
-3. **preference（偏好）** —— 软性偏好 / 习惯。
-4. **episodic（情节）** —— 带时间锚点的具体事件（30 天软衰减）。
-5. **profile（特质）** —— 关于用户的稳定性格 / 价值观 / 长期模式 + 高层洞察，强制在场。
+2. **fact（事实）** —— 关于用户的**稳定**事实（持久、非身份非特质，entity 覆盖）。
+3. **state（近况）** —— 关于用户的**可变**近况 / 当前状态 / 计划（会过时，entity 覆盖）。
+4. **preference（偏好）** —— 软性偏好 / 习惯。
+5. **episodic（情节）** —— 发生过的具体事件（动词 + 了/过/完；30 天软衰减）。
+6. **profile（特质）** —— 关于用户的稳定性格 / 价值观 / 长期模式 + 高层洞察，强制在场。
 
 > 身份基本信息（名字/性别/职业）**不归 profile**，归「结构化身份」（`store/identity.ts`，单值覆盖）。
 

@@ -8,15 +8,15 @@ export type DreamRunRow = {
   details: DreamDetails;
 };
 
-const EMPTY_DETAILS: DreamDetails = { facts: [], identity: [], profile: [], merged: [], resolved: [] };
+const EMPTY_DETAILS: DreamDetails = { states: [], identity: [], profile: [], merged: [], resolved: [] };
 
 export function createDreamRunsStore(pool: Pool) {
   return {
     async log(personaName: string, userId: string, r: DreamResult): Promise<void> {
       await pool.query(
-        `INSERT INTO dream_runs (persona_name, user_id, facts, identity, profile, merged, resolved, details)
+        `INSERT INTO dream_runs (persona_name, user_id, states, identity, profile, merged, resolved, details)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
-        [personaName, userId, r.abstractedFacts, r.abstractedIdentity, r.abstractedProfile, r.merged, r.resolved, JSON.stringify(r.details)],
+        [personaName, userId, r.abstractedStates, r.abstractedIdentity, r.abstractedProfile, r.merged, r.resolved, JSON.stringify(r.details)],
       );
     },
 

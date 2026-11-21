@@ -107,7 +107,7 @@ export async function main() {
           }
           const r = await dreamOnMemory({ llm, model: cfg.llm.generateModel, store: memory, identity, embedder, userId, personaName: p.name });
           lastDreamAt.set(p.name, new Date().toISOString());
-          console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedIdentity}i/${r.abstractedProfile}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
+          console.log(`[dream] ${p.name}：近况 +${r.abstractedStates}、身份 +${r.abstractedIdentity}、特质 +${r.abstractedProfile}，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
           await dreamRuns.log(p.name, userId, r).catch(() => {});
         } catch (e) {
           console.warn(`[dream] ${p.name} 做梦失败：`, e);

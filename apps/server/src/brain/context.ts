@@ -56,8 +56,9 @@ export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number)
   const groups: { label: string; items: Memory[] }[] = [
     { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },
     { label: '特质（对方的稳定性格/价值观/长期模式 + 你对 TA 的理解，时刻记得）', items: recalled.profile },
+    { label: '近况（对方当前的近况/状态/计划，会变化）', items: recalled.state },
     { label: '偏好（软规则/习惯，长期有效）', items: recalled.preference },
-    { label: '事实（稳定状态）', items: recalled.fact },
+    { label: '事实（稳定事实）', items: recalled.fact },
     { label: '情节（具体事件）', items: recalled.episodic },
   ];
   const constraintBudget = Math.floor(maxTokens * CONSTRAINT_BUDGET_RATIO);

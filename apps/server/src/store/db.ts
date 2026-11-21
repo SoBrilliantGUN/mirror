@@ -176,7 +176,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       persona_name text NOT NULL,
       user_id text NOT NULL,
-      facts int NOT NULL DEFAULT 0,
+      states int NOT NULL DEFAULT 0,
       identity int NOT NULL DEFAULT 0,
       profile int NOT NULL DEFAULT 0,
       merged int NOT NULL DEFAULT 0,
@@ -186,4 +186,6 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS dream_runs_persona_user_time_idx ON dream_runs (persona_name, user_id, created_at DESC)`);
+  // 迁移：近况（state）记忆型引入后，dream_runs 的 facts 列改名 states（老库才有 facts 列；新库已建 states，此句 no-op）。
+  await pool.query(`ALTER TABLE dream_runs RENAME COLUMN facts TO states`).catch(() => {});
 }

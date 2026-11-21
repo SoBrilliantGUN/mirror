@@ -102,9 +102,9 @@ export type RecalledContext = {
   time: { timeContext?: TimeContext; upcoming: UpcomingDate[]; careHint: string };
 };
 
-const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], preference: [], episodic: [], profile: [] };
+const EMPTY_RECALL: RecalledMemories = { constraint: [], fact: [], state: [], preference: [], episodic: [], profile: [] };
 
-const RECALL_KEYS = ['constraint', 'profile', 'fact', 'preference', 'episodic'] as const;
+const RECALL_KEYS = ['constraint', 'profile', 'fact', 'state', 'preference', 'episodic'] as const;
 
 // 空的召回上下文：eval/demo（无长期记忆）复用生产同一套消息装配时用。
 export function emptyRecall(): RecalledContext {
@@ -138,6 +138,7 @@ export function mergeRecalled(base: RecalledMemories, extra: Memory[]): Recalled
     constraint: [...base.constraint],
     profile: [...base.profile],
     fact: [...base.fact],
+    state: [...base.state],
     preference: [...base.preference],
     episodic: [...base.episodic],
   };

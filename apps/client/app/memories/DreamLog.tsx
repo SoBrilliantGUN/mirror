@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
 type DreamDetails = {
-  facts: string[];
+  states: string[];
   identity: { field: string; value: string }[];
   profile: string[];
   merged: string[];
@@ -20,7 +20,7 @@ type DreamRun = {
 // 把一次做梦实际做的事，翻成一行行人话。
 function describeDetails(d: DreamDetails): string[] {
   const lines: string[] = [];
-  for (const f of d.facts) lines.push(`记下近况：${f}`);
+  for (const f of d.states) lines.push(`记下近况：${f}`);
   for (const i of d.identity) lines.push(`身份：${i.field} = ${i.value}`);
   for (const p of d.profile) lines.push(`观察到：${p}`);
   for (const m of d.merged) lines.push(`合并了重复：${m}`);
@@ -57,7 +57,7 @@ export default function DreamLog({ persona, onClose }: { persona: string; onClos
             <div className="empty">还没有做梦记录，过一会儿再来看看。</div>
           ) : (
             runs.slice(0, 30).map((r, i) => {
-              const lines = describeDetails(r.details ?? { facts: [], identity: [], profile: [], merged: [], resolved: [] });
+              const lines = describeDetails(r.details ?? { states: [], identity: [], profile: [], merged: [], resolved: [] });
               return (
                 <div className="dream-item" key={i}>
                   <div className="dream-item-time">{r.createdAt.slice(0, 16).replace('T', ' ')}</div>

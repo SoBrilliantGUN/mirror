@@ -5,17 +5,18 @@ import { Fragment, useEffect, useState } from 'react';
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
 type Mem = { id: string; kind: string; content: string; createdAt: string };
-type Filter = 'all' | 'constraint' | 'fact' | 'preference' | 'episodic' | 'profile';
+type Filter = 'all' | 'constraint' | 'fact' | 'state' | 'preference' | 'episodic' | 'profile';
 
 const KIND_LABEL: Record<string, string> = {
-  fact: '事实', preference: '偏好', episodic: '情节', profile: '特质', constraint: '约束',
+  fact: '事实', state: '近况', preference: '偏好', episodic: '情节', profile: '特质', constraint: '约束',
 };
-const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
+const SHOW_KINDS = ['constraint', 'fact', 'state', 'preference', 'episodic', 'profile'];
 const chipClass = (k: string) => k;
 const TABS: { key: Filter; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'constraint', label: '约束' },
   { key: 'fact', label: '事实' },
+  { key: 'state', label: '近况' },
   { key: 'preference', label: '偏好' },
   { key: 'episodic', label: '情节' },
   { key: 'profile', label: '特质' },

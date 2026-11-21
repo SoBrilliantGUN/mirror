@@ -31,7 +31,7 @@ const mem = (content: string, anchor?: TimeAnchor): Memory => ({
 });
 
 const recalled = (e: string[] = [], f: string[] = []): RecalledMemories => ({
-  constraint: [], profile: [], fact: f.map((c) => mem(c)), preference: [], episodic: e.map((c) => mem(c)),
+  constraint: [], profile: [], fact: f.map((c) => mem(c)), state: [], preference: [], episodic: e.map((c) => mem(c)),
 });
 
 console.log('normalizeTimeAnchor（时间锚点规范化）');

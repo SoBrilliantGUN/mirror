@@ -3,8 +3,8 @@ import type { Pool } from 'pg';
 import type { Memory, MemoryKind, MemoryStore, PeriodicRule, RecalledMemories, TimeAnchor } from '@mirror/contracts';
 import type { Embedder } from '../llm/embedding';
 
-// 长期记忆存储（Postgres + pgvector + pg_trgm）。五型记忆 + 混合召回，参考 kima 的
-// CopilotMemory，但只保留核心子集：constraint 硬召回、fact entity 覆盖、
+// 长期记忆存储（Postgres + pgvector + pg_trgm）。六型记忆 + 混合召回，参考 kima 的
+// CopilotMemory，但只保留核心子集：constraint 硬召回、fact/state entity 覆盖、
 // episodic 30 天软衰减、dense+trgm 的 RRF 融合召回。不做软删除复活 / ACT-R 激活值那些重设施。
 //
 // 隔离维度：每条记忆同时挂 persona_name（哪个陪伴者记得）+ user_id（哪位用户）。人物间画像
@@ -38,6 +38,13 @@ export function computeActivation(m: Memory, now: Date): number {
 
 function aboveFloor(m: Memory, now: Date): boolean {
   return computeActivation(m, now) >= RECALL_FLOOR;
+}
+
+// 情节按「事件时间」升序（有绝对锚点用锚点日期，否则用写入时间），让模型按时间线读情节。
+function byEventTime(a: Memory, b: Memory): number {
+  const ta = a.anchor?.kind === 'absolute' ? a.anchor.at : a.createdAt;
+  const tb = b.anchor?.kind === 'absolute' ? b.anchor.at : b.createdAt;
+  return ta < tb ? -1 : ta > tb ? 1 : 0;
 }
 
 type MemoryRow = {
@@ -180,16 +187,20 @@ export function createMemoryStore(
     const { rows } = await pool.query<MemoryRow>(`SELECT * FROM memories WHERE id = ANY($1::uuid[])`, [ids]);
     const byId = new Map(rows.map((r) => [r.id, r]));
     const now = new Date();
-    return fused
+    const memories = fused
       .map((f) => byId.get(f.item))
       .filter((m): m is MemoryRow => Boolean(m))
       .map(toMemory)
       .filter((m) => aboveFloor(m, now));
+    if (kind === 'episodic') memories.sort(byEventTime);
+    return memories;
   };
 
   const listActive = async (personaName: string, userId: string, kind: MemoryKind): Promise<Memory[]> => {
+    // 情节按「事件时间」升序（有绝对锚点用锚点日期，否则用写入时间），其余按写入时间。
+    const order = kind === 'episodic' ? 'COALESCE(anchor_at, created_at::date) ASC, created_at ASC' : 'created_at ASC';
     const { rows } = await pool.query<MemoryRow>(
-      `SELECT * FROM memories WHERE persona_name = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY created_at ASC`,
+      `SELECT * FROM memories WHERE persona_name = $1 AND user_id = $2 AND kind = $3 AND ${ACTIVE} ORDER BY ${order}`,
       [personaName, userId, kind],
     );
     const now = new Date();
@@ -210,7 +221,7 @@ export function createMemoryStore(
   const getCoverage = async (personaName: string, userId: string): Promise<{ dimension: string; aspect: string | null; count: number }[]> => {
     const { rows } = await pool.query<{ dimension: string; aspect: string | null; count: number }>(
       `SELECT dimension, aspect, COUNT(*)::int AS count FROM memories
-        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
+        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','state','preference','episodic')
           AND dimension IS NOT NULL AND dimension <> '' AND ${ACTIVE}
         GROUP BY dimension, aspect`,
       [personaName, userId],
@@ -225,7 +236,7 @@ export function createMemoryStore(
     if (kw.length < 2) return 0;
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
-        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','preference','episodic')
+        WHERE persona_name = $1 AND user_id = $2 AND kind IN ('fact','state','preference','episodic')
           AND NOT superseded AND content LIKE '%' || $3 || '%'`,
       [personaName, userId, kw],
     );
@@ -238,7 +249,7 @@ export function createMemoryStore(
     const { rowCount } = await pool.query(
       `UPDATE memories SET superseded = true, superseded_at = now()
         WHERE id = $1 AND persona_name = $2 AND user_id = $3
-          AND kind IN ('fact','preference','episodic') AND NOT superseded`,
+          AND kind IN ('fact','state','preference','episodic') AND NOT superseded`,
       [id, personaName, userId],
     );
     return rowCount ?? 0;
@@ -354,19 +365,20 @@ export function createMemoryStore(
   return {
     async recall(personaName, userId, query): Promise<RecalledMemories> {
       const qvec = (await embedder.embed([query]))[0];
-      const [constraint, profile, preference, fact, episodic] = await Promise.all([
+      const [constraint, profile, preference, fact, state, episodic] = await Promise.all([
         listActive(personaName, userId, 'constraint'),
         listActive(personaName, userId, 'profile'), // profile 强制在场：全量召回（不走向量，像 constraint）
         hybridRecall(personaName, userId, 'preference', query, qvec),
         hybridRecall(personaName, userId, 'fact', query, qvec),
+        hybridRecall(personaName, userId, 'state', query, qvec),
         hybridRecall(personaName, userId, 'episodic', query, qvec),
       ]);
-      return { constraint, profile, fact, preference, episodic };
+      return { constraint, profile, fact, state, preference, episodic };
     },
 
     async search(personaName, userId, query, kind, topK = recallTopK): Promise<Memory[]> {
       const qvec = (await embedder.embed([query]))[0];
-      const kinds: MemoryKind[] = kind ? [kind] : ['fact', 'episodic'];
+      const kinds: MemoryKind[] = kind ? [kind] : ['fact', 'state', 'episodic'];
       const hits = (await Promise.all(kinds.map((k) => hybridRecall(personaName, userId, k, query, qvec)))).flat();
       return hits.slice(0, topK);
     },
@@ -382,8 +394,8 @@ export function createMemoryStore(
       const ttlDays = kind === 'episodic' ? EPISODIC_TTL_DAYS : null;
       let version = 1;
 
-      // fact 同 entity 覆盖：旧活跃条留痕 superseded，新条 version++（不硬删，可审计）。
-      if (kind === 'fact' && entityId) {
+      // fact/state 同 entity 覆盖：旧活跃条留痕 superseded，新条 version++（不硬删，可审计）。
+      if ((kind === 'fact' || kind === 'state') && entityId) {
         const { rows } = await pool.query<{ id: string; version: number }>(
           `SELECT id, version FROM memories
             WHERE persona_name = $1 AND user_id = $2 AND kind = 'fact' AND entity_id = $3 AND ${ACTIVE}
