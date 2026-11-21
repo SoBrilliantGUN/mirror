@@ -38,13 +38,14 @@ export function buildTtsEndpoints(cfg: {
 export class TtsEngine {
   constructor(
     private readonly endpoints: TtsEndpoint[],
-    private readonly pushPcm: (pcm: Uint8Array) => void,
+    private readonly pushPcm: (pcm: Uint8Array, onFirstFrame?: () => void) => void,
     private readonly onStart: () => void,
     private readonly sleep: (ms: number) => Promise<void>,
   ) {}
 
   // 整句合成：先缓冲完整句再一次性进队列（逐句顺序放，避免「来一段放一段」的流式卡顿）。
-  async synthesize(params: Omit<RealtimeTTSInput, 'wsUrl' | 'apiKey'>): Promise<void> {
+  // onFirstFrame 只在该句第一帧真正开始播放时触发一次（字幕与声音对齐，重试期间不触发）。
+  async synthesize(params: Omit<RealtimeTTSInput, 'wsUrl' | 'apiKey'>, onFirstFrame?: () => void): Promise<void> {
     const text = toTtsText(params.text); // 易读替换：只改念的字，不影响落库/回看原文
     let lastErr: unknown = null;
     for (let i = 0; i < this.endpoints.length; i++) {
@@ -52,14 +53,16 @@ export class TtsEngine {
       let attempt = 0;
       while (true) {
         try {
-          this.onStart();
           const acc: Uint8Array[] = [];
           for await (const pcm of streamTTS({ ...params, text, wsUrl: ep.url, apiKey: ep.key })) {
             if (params.signal?.aborted) break;
             acc.push(pcm);
           }
           if (params.signal?.aborted) return;
-          for (const pcm of acc) this.pushPcm(pcm);
+          // onStart（标记「已出声」）迁到首帧真正播放时再触发，别在合成阶段就提前亮「对方正在说」。
+          for (let j = 0; j < acc.length; j++) {
+            this.pushPcm(acc[j], j === 0 ? () => { this.onStart(); onFirstFrame?.(); } : undefined);
+          }
           return;
         } catch (e) {
           if (params.signal?.aborted) return;

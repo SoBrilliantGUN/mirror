@@ -31,7 +31,7 @@ export type RtcCallbacks = {
 export type RtcPeer = {
   handleOffer(offerSdp: string): Promise<string>;
   whenReady(timeoutMs?: number): Promise<void>; // 等连接真正建立（首包到达），超时兜底
-  pushAgentPcm(chunk: Uint8Array, gain?: number): void; // 24kHz PCM 入播放队列（gain 可选，鸭音用）
+  pushAgentPcm(chunk: Uint8Array, gain?: number, onFirstFrame?: () => void): void; // 24kHz PCM 入播放队列（gain 可选，鸭音用；onFirstFrame 在该段真正开始播放时触发，用于字幕与声音对齐）
   end(): void; // 整轮结束：把末尾不满 20ms 的残余补齐发出
   clear(): void; // 打断：清空队列、停掉出帧（立刻停声）
   close(): void;
@@ -61,6 +61,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
 
   let sendTrack: MediaStreamTrack | null = null;
   let pcm48Queue = Buffer.alloc(0); // 48kHz PCM 播放队列
+  let sentBytes = 0; // pacer 已发送的累计字节（48kHz），供字幕对齐标记定位
+  let markers: { pos: number; cb: () => void }[] = []; // 队列播到 pos 时触发的回调（句子字幕与声音对齐）
   let downResample = createStreamResampler(24000, 48000); // 下行 TTS 流式重采样（跨 chunk 连续，消金属音）
   let prerolled = false; // 本轮是否已攒够预缓冲（断点/新一轮重置）
   let ended = false; // true = 这一轮不再有新的 PCM 进来（用于冲末尾残余）
@@ -143,6 +145,16 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
     pacerTimer = setTimeout(paceTick, 0);
   }
 
+  function fireMarkers() {
+    if (markers.length === 0) return;
+    let i = 0;
+    while (i < markers.length && markers[i].pos <= sentBytes) i++;
+    if (i === 0) return;
+    const fired = markers.slice(0, i);
+    markers = markers.slice(i);
+    for (const m of fired) m.cb();
+  }
+
   function paceTick() {
     pacerTimer = null;
     if (closed) return;
@@ -150,6 +162,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       const frameBuf = pcm48Queue.subarray(0, FRAME_BYTES);
       pcm48Queue = pcm48Queue.subarray(FRAME_BYTES);
       sendFrame(opus.encode(frameBuf, FRAME_SAMPLES));
+      sentBytes += FRAME_BYTES;
+      fireMarkers();
       nextFrameAt += 20; // 下一帧按真实时钟 +20ms，不靠估算总时长
       const delay = Math.max(0, nextFrameAt - performance.now());
       pacerTimer = setTimeout(paceTick, delay);
@@ -186,7 +200,7 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       return Promise.race([firstRtpPromise, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
     },
 
-    pushAgentPcm(chunk, gain = 1.0) {
+    pushAgentPcm(chunk, gain = 1.0, onFirstFrame) {
       if (closed) return;
       ended = false; // 又有新数据了（下一句），取消“已结束”状态
       const pcm24 = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
@@ -194,6 +208,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       if (gain !== 1.0) {
         for (let i = 0; i < pcm48.length; i++) pcm48[i] = Math.round(pcm48[i] * gain); // 鸭音：在重采样后的新数组上做，不污染缓存片段
       }
+      // 字幕对齐标记：这段 PCM 的第一帧在绝对流里的位置 = 已发送 + 当前排队长度，播到即触发。
+      if (onFirstFrame) markers.push({ pos: sentBytes + pcm48Queue.length, cb: onFirstFrame });
       pcm48Queue = Buffer.concat([pcm48Queue, Buffer.from(pcm48.buffer, pcm48.byteOffset, pcm48.byteLength)]);
       ensurePacer();
     },
@@ -211,6 +227,8 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
       downResample = createStreamResampler(24000, 48000); // 打断后重置，别让上一段的上下文污染新回复
       prerolled = false; // 打断后重新预缓冲
       ended = false;
+      sentBytes = 0;
+      markers = []; // 未播出的句子一并作废，其字幕也不再触发
       if (pacerTimer !== null) {
         clearTimeout(pacerTimer);
         pacerTimer = null;
@@ -225,6 +243,7 @@ export function createRtcPeer(cbs: RtcCallbacks, ice: RtcIceOptions): RtcPeer {
         pacerTimer = null;
       }
       pcm48Queue = Buffer.alloc(0);
+      markers = [];
       pc.close();
     },
 

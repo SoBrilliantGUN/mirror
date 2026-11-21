@@ -158,7 +158,7 @@ export type SessionDeps = {
   // 测试注入点（默认用真实实现；测试传 mock 以脱离网络/设备）
   rtcFactory?: (cbs: RtcCallbacks, ice: RtcIceOptions) => RtcPeer;
   asrFactory?: () => ParaformerRealtimeASR;
-  ttsFactory?: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
+  ttsFactory?: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array, onFirstFrame?: () => void) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
   greetingClipsFactory?: (tts: GreetingTts) => GreetingClipCache;
 };
 
@@ -237,7 +237,7 @@ export class CallSession {
   // —— 测试注入点（默认实现；测试传 mock） ——
   private readonly rtcFactory: (cbs: RtcCallbacks, ice: RtcIceOptions) => RtcPeer;
   private readonly asrFactory: () => ParaformerRealtimeASR;
-  private readonly ttsFactory: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
+  private readonly ttsFactory: (endpoints: TtsEndpoint[], pushPcm: (pcm: Uint8Array, onFirstFrame?: () => void) => void, onStart: () => void, sleep: (ms: number) => Promise<void>) => TtsEngine;
   private readonly greetingClipsFactory: (tts: GreetingTts) => GreetingClipCache;
 
   constructor(deps: SessionDeps) {
@@ -272,7 +272,7 @@ export class CallSession {
     // TTS 合成引擎：把「整句合成 + 多端点重试」委托出去，只留 pushPcm 回调指向当前 RTC。
     this.tts = this.ttsFactory(
       buildTtsEndpoints(this.cfg.speech),
-      (pcm) => this.rtc?.pushAgentPcm(pcm),
+      (pcm, onFirstFrame) => this.rtc?.pushAgentPcm(pcm, 1.0, onFirstFrame),
       () => { this.turnTaking.markAudible(); this.rtc?.sendControl({ type: 'speaking', value: true }); },
       (ms) => this.sleep(ms),
     );
@@ -384,8 +384,10 @@ export class CallSession {
           // ASR 和 NLS 始终收——否则陪伴者说话时你抢话，麦克风被门挡住听不见。
           this.asr?.sendAudio(chunk);
           this.sed?.sendPcm(chunk);
-          if (this.turnTaking.speaking) return;
+          // 真声能门控的 recentVoiceAt 必须独立于 speaking 判断：AI 在构思（thinking）或说话时
+          // 你抢话也要刷新，否则 onAsrResult 的幻听门控会把抢话这句当幻听丢掉（「偶尔没听到」元凶）。
           if (hasVoicePcm(chunk)) this.recentVoiceAt = Date.now();
+          if (this.turnTaking.speaking) return;
           this.acoustic?.push(chunk);
           this.backchannel.feedPcm(chunk);
         },

@@ -85,7 +85,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
       obs.score('first-token-ms', firstTokenMs);
     }
     console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
-    pushTranscript(clean); // 逐句推字幕（边说边显示）
+    // 字幕对齐：不在合成前就推，而是等这句真正开始播放（onFirstFrame）再推给前端，别让文字抢跑在声音前面。
     await obs.span('tts', () => tts.synthesize({
       model: cosyvoiceModel,
       voice,
@@ -94,7 +94,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
       rate: segRate,
       pitch: segProsody.pitch,
       signal,
-    }), { text: clean, emotion: segEmotion });
+    }, () => pushTranscript(clean)), { text: clean, emotion: segEmotion });
     return clean;
   };
 
