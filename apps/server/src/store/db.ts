@@ -159,6 +159,9 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS call_turns_persona_user_time_idx ON call_turns (persona_name, user_id, created_at DESC)`);
+  // 迁移：老库的 call_turns 没有 raw_text/name_corrected 两列（三版改动前建的），幂等补上。
+  await pool.query(`ALTER TABLE call_turns ADD COLUMN IF NOT EXISTS raw_text text`);
+  await pool.query(`ALTER TABLE call_turns ADD COLUMN IF NOT EXISTS name_corrected text`);
 
   // 结构化身份（做梦时反思抽取）：field→value 单值覆盖，不做自由文本记忆。字段名动态（中文名/昵称/宠物…）。
   await pool.query(`
