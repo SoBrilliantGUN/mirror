@@ -5,15 +5,16 @@ import { Fragment, useEffect, useState } from 'react';
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
 
 type Mem = { id: string; kind: string; content: string; createdAt: string };
-type Filter = 'all' | 'fact' | 'preference' | 'episodic' | 'profile';
+type Filter = 'all' | 'constraint' | 'fact' | 'preference' | 'episodic' | 'profile';
 
 const KIND_LABEL: Record<string, string> = {
   fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
 };
-const SHOW_KINDS = ['fact', 'preference', 'episodic', 'profile'];
+const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
 const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
 const TABS: { key: Filter; label: string }[] = [
   { key: 'all', label: '全部' },
+  { key: 'constraint', label: '约束' },
   { key: 'fact', label: '事实' },
   { key: 'preference', label: '偏好' },
   { key: 'episodic', label: '情节' },
@@ -29,15 +30,19 @@ export default function MemoryLibrary({ persona, onClose }: { persona: string; o
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   // 删除二次确认：Electron 的 confirm() 已弃用，改成「删除 → 确认删除」两步，不依赖原生弹窗。
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   async function load() {
     if (!persona) return;
+    setLoading(true);
     try {
       const r = await fetch(`${getServer()}/memories?persona=${encodeURIComponent(persona)}`);
       if (!r.ok) return;
       const d = await r.json();
       setMemories((d.memories ?? []).filter((m: Mem) => SHOW_KINDS.includes(m.kind)));
-    } catch { /* 后端未起，忽略 */ }
+    } catch { /* 后端未起，忽略 */ } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { if (persona) load(); }, [persona]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -105,7 +110,9 @@ export default function MemoryLibrary({ persona, onClose }: { persona: string; o
               </tr>
             </thead>
             <tbody>
-              {shown.length === 0 ? (
+              {loading ? (
+                <tr><td className="empty-cell" colSpan={4}>加载中…</td></tr>
+              ) : shown.length === 0 ? (
                 <tr><td className="empty-cell" colSpan={4}>没有记忆</td></tr>
               ) : (
                 shown.map((m) => (

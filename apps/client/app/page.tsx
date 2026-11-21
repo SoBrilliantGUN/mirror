@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { COMPANIONS, type Companion } from './companions.generated';
 import { useCall } from './useCall';
 import MemoryLibrary from './memories/MemoryLibrary';
+import DreamLog from './memories/DreamLog';
 import SettingsPanel from './settings/SettingsPanel';
 
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
@@ -13,8 +14,8 @@ type Mem = { id: string; kind: string; content: string; createdAt: string };
 const KIND_LABEL: Record<string, string> = {
   fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
 };
-// 笔记本展示的四类（constraint 是内部红线，不进「关于对方」的记忆面板）
-const SHOW_KINDS = ['fact', 'preference', 'episodic', 'profile'];
+// 笔记本展示的类型（含约束）
+const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
 const chipClass = (k: string) => (k === 'profile' ? 'persona' : k);
 
 const CallIcon = ({ size = 18 }: { size?: number }) => (
@@ -29,6 +30,7 @@ export default function Page() {
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [libOpen, setLibOpen] = useState(false);
+  const [dreamOpen, setDreamOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
   const [keysMissing, setKeysMissing] = useState(false);
@@ -36,6 +38,7 @@ export default function Page() {
   const [inCall, setInCall] = useState(false);
   const [callStartAt, setCallStartAt] = useState<string | null>(null);
   const [memories, setMemories] = useState<Mem[]>([]);
+  const [memoriesLoading, setMemoriesLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [contactsLoading, setContactsLoading] = useState(true);
@@ -43,7 +46,6 @@ export default function Page() {
   const [editingMem, setEditingMem] = useState<{ id: string; text: string } | null>(null);
   const [deletingMem, setDeletingMem] = useState<string | null>(null);
 
-  const memTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
@@ -114,22 +116,23 @@ export default function Page() {
 
   async function loadMemories(since?: string | null) {
     if (!selected) { setMemories([]); return; }
+    setMemoriesLoading(true);
     const url = `${getServer()}/memories?persona=${encodeURIComponent(selected)}${since ? '&since=' + encodeURIComponent(since) : ''}`;
     try {
       const r = await fetch(url);
       if (!r.ok) return;
       const d = await r.json();
       setMemories((d.memories ?? []).filter((m: Mem) => SHOW_KINDS.includes(m.kind)));
-    } catch { /* 后端未起，忽略 */ }
+    } catch { /* 后端未起，忽略 */ } finally {
+      setMemoriesLoading(false);
+    }
   }
 
-  // 通话中定时拉新记忆（后台写记忆是异步的）
+  // 通话开始时拉一次记忆；之后的更新由后端「记忆写好」事件驱动（见 call.start 的 onMemory）。
   useEffect(() => {
     if (inCall && callStartAt) {
       loadMemories(callStartAt);
-      memTimerRef.current = setInterval(() => loadMemories(callStartAt), 4000);
     }
-    return () => { if (memTimerRef.current) clearInterval(memTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inCall, callStartAt, selected]);
 
@@ -142,16 +145,16 @@ export default function Page() {
 
   function startCall(c: Companion) {
     if (!c.available) return;
+    const startAt = new Date().toISOString();
     setSelected(c.name);
     setMemories([]);
-    setCallStartAt(new Date().toISOString());
+    setCallStartAt(startAt);
     setInCall(true);
     setNotice(null);
     call.start(c.name, (reason) => {
       setInCall(false);
-      if (memTimerRef.current) { clearInterval(memTimerRef.current); memTimerRef.current = null; }
       if (reason === 'disconnect') showNotice('连接已断开，对方不在线了');
-    });
+    }, () => loadMemories(startAt));
   }
 
   async function toggleAdd(c: Companion) {
@@ -293,12 +296,19 @@ export default function Page() {
         <aside className="book glass">
           <div className="book-h">
             <h2>📓 笔记本</h2>
-            {selectedCompanion && <button className="more" onClick={() => setLibOpen(true)}>更多记忆 →</button>}
+            {selectedCompanion && (
+              <>
+                <button className="more" onClick={() => setDreamOpen(true)}>🌙 做梦</button>
+                <button className="more" onClick={() => setLibOpen(true)}>更多记忆 →</button>
+              </>
+            )}
           </div>
           <div className="scope">{inCall ? '本次对话产生的记忆' : selectedCompanion ? `${selectedCompanion.name} 记得的（开始通话后显示本次对话）` : '选择一个伙伴'}</div>
           <div className="mem">
             {!selectedCompanion ? (
               <div className="empty">选一位伙伴后<br />这里显示 TA 关于你的记忆</div>
+            ) : memoriesLoading && memories.length === 0 ? (
+              <div className="empty">加载中…</div>
             ) : memories.length === 0 ? (
               <div className="empty">{inCall ? <>还没产生新记忆<br />聊几句就有了</> : '暂无本次对话的记忆'}</div>
             ) : (
@@ -369,6 +379,10 @@ export default function Page() {
 
       {libOpen && selectedCompanion && (
         <MemoryLibrary persona={selectedCompanion.name} onClose={() => setLibOpen(false)} />
+      )}
+
+      {dreamOpen && selectedCompanion && (
+        <DreamLog persona={selectedCompanion.name} onClose={() => setDreamOpen(false)} />
       )}
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}

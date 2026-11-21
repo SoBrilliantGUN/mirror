@@ -11,9 +11,9 @@ import type { Embedder } from '../llm/embedding';
 // 完全隔离——程书衡不会读到只告诉沈知遥的事。persona_name 用 persona.name（PERSONAS 主键）。
 
 const EPISODIC_TTL_DAYS = 30;
-// profile 去重阈值：近重复人设/洞察的余弦相似度（1 - 向量距离）达到此值即视为重复，不重复入库。
-// 实测近重复（措辞微变）≈0.99+，不同洞察 ≈0.63~0.72，取 0.9 留足裕量。
-const PROFILE_DUP_SIM = 0.9;
+// 通用查重阈值：近重复（措辞微变）≈0.99+，不同内容 ≈0.63~0.72，取 0.9 留足裕量。
+// 「对方自称张渔歌」这类每次开场都被重新抽取的稳定事实，靠它挡住重复入库（已存在就不写）。
+const DUP_SIM = 0.9;
 
 // 激活值（遗忘公式，对齐 kima `services/copilot.py` 的 compute_activation）：
 //   activation = exp(-age/ttl) + log(1+access_count)·ACCESS_LOG_FACTOR +（近 RECENCY_WINDOW 天内被召回 ? RECENCY_BONUS : 0）
@@ -259,33 +259,34 @@ export function createMemoryStore(
     return excess.length;
   };
 
-  // profile 去重：反思可能反复生成同一条人设/洞察（内容精确相同，或措辞微变的语义重复）。
-  // emb 为空时只按 content 精确查重；有 emb 时再按余弦相似度近义查重（复用 write 里已算好的向量）。
-  // 命中返回已存在的活跃条，否则 null。
-  const findDuplicateProfile = async (
+  // 通用近义查重：写入前查同 kind 下是否已有语义相同的活跃条，命中返回已存在条（不重复写）。
+  // 之前只对 profile 做；现在扩展到所有 kind——「对方自称张渔歌」这类稳定事实每次开场都可能
+  // 被重新抽取出来，靠查重挡住。emb 为空只按 content 精确查重；有 emb 再按余弦近义查重。
+  const findDuplicate = async (
     personaName: string,
     userId: string,
+    kind: MemoryKind,
     content: string,
     emb: number[] | null,
   ): Promise<Memory | null> => {
     if (emb === null) {
       const { rows } = await pool.query<MemoryRow>(
         `SELECT * FROM memories
-          WHERE persona_name = $1 AND user_id = $2 AND kind = 'profile' AND content = $3 AND ${ACTIVE}
+          WHERE persona_name = $1 AND user_id = $2 AND kind = $3 AND content = $4 AND ${ACTIVE}
           LIMIT 1`,
-        [personaName, userId, content],
+        [personaName, userId, kind, content],
       );
       return rows[0] ? toMemory(rows[0]) : null;
     }
     const { rows } = await pool.query<{ id: string; score: number }>(
       `SELECT id, 1 - (embedding <=> $3::vector) AS score
          FROM memories
-        WHERE persona_name = $1 AND user_id = $2 AND kind = 'profile' AND embedding IS NOT NULL AND ${ACTIVE}
+        WHERE persona_name = $1 AND user_id = $2 AND kind = $4 AND embedding IS NOT NULL AND ${ACTIVE}
         ORDER BY embedding <=> $3::vector
         LIMIT 1`,
-      [personaName, userId, toVectorLiteral(emb)],
+      [personaName, userId, toVectorLiteral(emb), kind],
     );
-    if (rows[0] && rows[0].score >= PROFILE_DUP_SIM) {
+    if (rows[0] && rows[0].score >= DUP_SIM) {
       return getById(rows[0].id);
     }
     return null;
@@ -371,17 +372,12 @@ export function createMemoryStore(
     },
 
     async write(personaName, userId, { kind, content, entityId = null, dimension = null, aspect = null, anchor = null }): Promise<Memory> {
-      // profile 先精确查重：命中直接返回已存在条，省掉一次 embedding 调用。
-      if (kind === 'profile') {
-        const dup = await findDuplicateProfile(personaName, userId, content, null);
-        if (dup) return dup;
-      }
+      // 通用近义查重：先按 content 精确查重（快，命中省一次 embedding），再按余弦近义查重。
+      const dup0 = await findDuplicate(personaName, userId, kind, content, null);
+      if (dup0) return dup0;
       const [emb] = await embedder.embed([content]);
-      // profile 再近义查重：复用刚算好的向量，拦截「措辞微变但语义重复」的人设/洞察重复入库。
-      if (kind === 'profile') {
-        const dup = await findDuplicateProfile(personaName, userId, content, emb);
-        if (dup) return dup;
-      }
+      const dup = await findDuplicate(personaName, userId, kind, content, emb);
+      if (dup) return dup;
       const id = randomUUID();
       const ttlDays = kind === 'episodic' ? EPISODIC_TTL_DAYS : null;
       let version = 1;
