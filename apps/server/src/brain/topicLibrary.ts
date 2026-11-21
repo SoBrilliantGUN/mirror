@@ -85,7 +85,8 @@ export async function analyzeSessionTopics(deps: {
 }
 
 // 聚合 → 找「感兴趣」主题 → 搜索 + 总结 + 存库。返回新增了几条素材。
-const INTEREST_SESSION_MIN = 4; // 「聊了大于 3 次」= 至少 4 通电话
+// 兴趣阈值（单一权威）：前端不复制此值，改这里即可，/topics 接口会把当前值回传给前端展示。
+export const INTEREST_SESSION_MIN = 4; // 「聊了大于 3 次」= 至少 4 通电话
 
 export async function refreshTopicLibrary(deps: {
   llm: LlmClient;

@@ -82,6 +82,7 @@ export async function main() {
     memory,
     transcript,
     dreamRuns,
+    topics,
     userId,
     defaultPersona: () => session.personaName,
     onRtcOffer: (body) => session.handleOffer(body),

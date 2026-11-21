@@ -2,6 +2,7 @@
 // 纯接线、无业务状态；RTC 编排那一大坨在 session.ts，这里只做「解析请求 → 调 store → 写响应」。
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { MemoryKind, MemoryStore } from '@mirror/contracts';
+import { INTEREST_SESSION_MIN } from './brain/topicLibrary';
 
 export type OfferBody = { sdp: string; name?: string; lang?: 'zh' | 'en'; englishMode?: 'immersion' | 'coach' };
 export type OfferResult = { sdp: string } | { error: string; status: number };
@@ -11,6 +12,10 @@ export type RouterDeps = {
   memory: MemoryStore;
   transcript: { list(personaName: string, userId: string, opts: { since?: string; limit?: number }): Promise<unknown[]> };
   dreamRuns: { recent(personaName: string, userId: string, limit?: number): Promise<unknown[]> };
+  topics: {
+    engagementSummary(personaName: string, userId: string): Promise<unknown[]>;
+    listLibrary(personaName: string, userId: string, limit?: number): Promise<unknown[]>;
+  };
   userId: string;
   defaultPersona: () => string; // 当前 persona.name（无 ?persona 时的回退）
   onRtcOffer: (body: OfferBody) => Promise<OfferResult>;
@@ -122,6 +127,24 @@ export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: Serv
         const limitParam = u.searchParams.get('limit');
         const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 20) : 20;
         sendJson(res, 200, { runs: await deps.dreamRuns.recent(personaName, deps.userId, limit) });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+
+    // 话题面板：已搜网总结的备用话题库 + 每通电话抽出的主题兴趣进度（跨通话聚合）。
+    if (req.method === 'GET' && req.url?.startsWith('/topics')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
+        const limitParam = u.searchParams.get('limit');
+        const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 100) : 100;
+        const [library, engagements] = await Promise.all([
+          deps.topics.listLibrary(personaName, deps.userId, limit),
+          deps.topics.engagementSummary(personaName, deps.userId),
+        ]);
+        sendJson(res, 200, { library, engagements, interestSessionMin: INTEREST_SESSION_MIN });
       } catch (e) {
         sendJson(res, 500, { error: String(e) });
       }

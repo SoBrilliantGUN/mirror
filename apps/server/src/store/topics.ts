@@ -3,6 +3,8 @@ import type { Pool } from 'pg';
 // 话题参与 + 备用话题库存储。表结构见 db.ts ensureSchema 的 topic_engagements / topic_library。
 export type TopicSessionStats = { topic: string; sessions: number; engagedSessions: number };
 export type TopicLibraryEntry = { topic: string; summary: string; createdAt: string };
+// 兴趣进度：每个主题跨通话的聚合（前端「话题」面板展示用，对齐 refreshTopicLibrary 的 ≥4 通且每通深入判定）。
+export type TopicEngagementSummary = { topic: string; dimension: string | null; sessions: number; engagedSessions: number; turns: number };
 
 export function createTopicsStore(pool: Pool) {
   return {
@@ -46,6 +48,29 @@ export function createTopicsStore(pool: Pool) {
         topic: r.topic as string,
         sessions: Number(r.sessions),
         engagedSessions: Number(r.engaged_sessions),
+      }));
+    },
+
+    // 每个主题的「兴趣进度」：出现在几通电话 + 深入聊过几通 + 总轮数，按通话数倒序（前端「话题」面板用）。
+    async engagementSummary(personaName: string, userId: string): Promise<TopicEngagementSummary[]> {
+      const { rows } = await pool.query(
+        `SELECT topic,
+                MAX(dimension) AS dimension,
+                COUNT(DISTINCT session_id) AS sessions,
+                COUNT(DISTINCT session_id) FILTER (WHERE engaged) AS engaged_sessions,
+                COALESCE(SUM(turns), 0) AS turns
+           FROM topic_engagements
+          WHERE persona_name = $1 AND user_id = $2
+          GROUP BY topic
+          ORDER BY sessions DESC, engaged_sessions DESC, turns DESC`,
+        [personaName, userId],
+      );
+      return rows.map((r) => ({
+        topic: r.topic as string,
+        dimension: (r.dimension as string | null) || null,
+        sessions: Number(r.sessions),
+        engagedSessions: Number(r.engaged_sessions),
+        turns: Number(r.turns),
       }));
     },
 

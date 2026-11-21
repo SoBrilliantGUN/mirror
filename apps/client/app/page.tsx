@@ -5,6 +5,7 @@ import { COMPANIONS, type Companion } from './companions.generated';
 import { useCall } from './useCall';
 import MemoryLibrary from './memories/MemoryLibrary';
 import DreamLog from './memories/DreamLog';
+import TopicLog from './memories/TopicLog';
 import SettingsPanel from './settings/SettingsPanel';
 
 const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
@@ -24,6 +25,26 @@ const CallIcon = ({ size = 18 }: { size?: number }) => (
   </svg>
 );
 
+// 笔记本头部三个功能入口的图标（Feather 风格线性图标，跟随 currentColor）。
+const DreamIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+  </svg>
+);
+
+const TopicIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
+const BookIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+  </svg>
+);
+
 export default function Page() {
   const [added, setAdded] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -31,6 +52,7 @@ export default function Page() {
   const [addOpen, setAddOpen] = useState(false);
   const [libOpen, setLibOpen] = useState(false);
   const [dreamOpen, setDreamOpen] = useState(false);
+  const [topicOpen, setTopicOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isElectron, setIsElectron] = useState(false);
   const [keysMissing, setKeysMissing] = useState(false);
@@ -321,10 +343,11 @@ export default function Page() {
           <div className="book-h">
             <h2>📓 笔记本</h2>
             {selectedCompanion && (
-              <>
-                <button className="more" onClick={() => setDreamOpen(true)}>🌙 做梦</button>
-                <button className="more" onClick={() => setLibOpen(true)}>更多记忆 →</button>
-              </>
+              <div className="book-tools">
+                <button className="icon-btn" onClick={() => setDreamOpen(true)} title="做梦" aria-label="做梦"><DreamIcon /></button>
+                <button className="icon-btn" onClick={() => setTopicOpen(true)} title="话题" aria-label="话题"><TopicIcon /></button>
+                <button className="icon-btn" onClick={() => setLibOpen(true)} title="更多记忆" aria-label="更多记忆"><BookIcon /></button>
+              </div>
             )}
           </div>
           <div className="scope">{inCall ? '本次对话产生的记忆' : selectedCompanion ? `${selectedCompanion.name} 记得的（开始通话后显示本次对话）` : '选择一个伙伴'}</div>
@@ -407,6 +430,10 @@ export default function Page() {
 
       {dreamOpen && selectedCompanion && (
         <DreamLog persona={selectedCompanion.name} onClose={() => setDreamOpen(false)} />
+      )}
+
+      {topicOpen && selectedCompanion && (
+        <TopicLog persona={selectedCompanion.name} onClose={() => setTopicOpen(false)} />
       )}
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
