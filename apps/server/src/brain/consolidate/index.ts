@@ -6,10 +6,20 @@ import { consolidateTurn, prefetchNextTurn } from './memoryTurn';
 import { consolidateGoal } from './goalTurn';
 import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './selfAddTurn';
 
-// 一轮结束后的「后台巩固」总入口：把散落在 session.ts 里的 6 个 fire-and-forget 归拢成一个调用。
-// - 主写 consolidateTurn（await）：抽取 + 分类兜底 + 落库，返回本轮写入 id + 事实（供会话「小笔记本」用）。
-// - 其余（预取 / 课题巩固 / 人设增补 / 提及检测 / 过期归档）全部 best-effort、失败只告警不阻断。
-// 不阻塞热路径：调用方 `.then/.catch` 处理主写结果，其余后台跑。
+// consolidate/ 目录：一轮结束后的「后台巩固」。本文件是唯一对外入口（consolidateAfterTurn），
+// 把散落在 session.ts 里的多个 fire-and-forget 归拢成一个调用。文件关系图：
+//
+//   index.ts（本文件，每轮结束后触发）
+//     ├─ await 主写   consolidateTurn（memoryTurn.ts）── 抽取 + 分类兜底 + 落库，返回写入 id + 事实
+//     └─ best-effort（失败只告警，不阻断）：
+//         ├─ prefetchNextTurn（memoryTurn.ts）── look-ahead 预取下一轮记忆
+//         ├─ consolidateGoal（goalTurn.ts）──── 教练轮结束巩固课题（frame=coach 才跑）
+//         ├─ consolidateSelfAdded（selfAddTurn.ts）── 抽取陪伴者自己的软细节
+//         ├─ touchSelfAdded（selfAddTurn.ts）──── 提及驱动衰减
+//         └─ selfAdded.archiveStale ──────────── 过期归档
+//   dream.ts（空闲时触发，非每轮）── dreamOnMemory：抽象升级(reflect) + 合并去重 + 清理矛盾
+//
+// 主写（consolidateTurn）await 拿结果（供会话更新 prevTurnMemoryIds / userSaid），其余后台跑。
 
 export type AfterTurnDeps = {
   llm: DeepSeek;

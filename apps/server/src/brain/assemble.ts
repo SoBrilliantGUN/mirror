@@ -24,8 +24,8 @@ import { buildCuriosityHint } from './ontology';
 import { formatCrisisResources } from './crisisResources';
 
 // 「说话 LLM」的上下文装配（热路径，零工具循环）：
-// eager 召回基线记忆（约束硬召回 + fact/preference/episodic 混合召回）注入 L2，
-// 再压缩 L5 历史、装配分层上下文，直接返回完整 messages 供 streamMessages 流式生成最终回复。
+// eager 召回基线记忆（约束硬召回 + fact/preference/episodic 混合召回）注入 [MEMORY] 块，
+// 再压缩历史、装配分层上下文，直接返回完整 messages 供 streamMessages 流式生成最终回复。
 // 首字延迟只多一次向量召回（非 LLM 往返）；记忆的「写」与「定向召回」都挪到后台 Agent
 // （见 consolidate.ts），不进热路径。参考 kima 的 reactive 图，但把工具循环整段摘掉了。
 
@@ -59,7 +59,7 @@ export type AssembleDeps = {
   personaName: string;
   memoryBudget: number;
   compress: (entries: HistoryEntry[]) => Promise<HistoryEntry[]>;
-  // 时间感知（L5）：当前时间上下文 + 临近日期 + 作息关怀，装配成 [TIME] 块。
+  // 时间感知（架构 L5 · 状态/会话）：当前时间上下文 + 临近日期 + 作息关怀，装配成 [TIME] 块。
   timeAware: TimeAware;
   // 人设增补存储：每轮召回活跃软细节，装配成 [SELF_ADDED] 块（永久固化 + 强制一致）。
   selfAdded: SelfAddedStore;
@@ -233,11 +233,27 @@ export function buildTurnMessages(ctx: RecalledContext, memoryBudget: number, in
     }
   }
 
-  // 决策信号（TurnPromptSignals）整体透传；装配器独有字段（召回/格式化产物）在这里补齐。
-  // AssembleInput 多出的 personaSystemPrompt/frame/… 是给 system prompt 用的，spread 进 user prompt 无碍。
+  // 决策信号（TurnPromptSignals）显式逐字段透传——不再 ...input 一把梭，避免把
+  // personaSystemPrompt / frame / coachInvite / celebrate / dependence / searchEnabled 这些
+  // 只给 system prompt 用的字段泄漏进 user prompt。装配器独有字段（召回/格式化产物）在这里补齐。
   const baseUser = buildLayeredUserPrompt({
-    ...input,
+    mode: input.mode,
+    stance: input.stance,
+    emotion: input.emotion,
+    mood: input.mood,
+    turnCount: input.turnCount,
+    text: input.text,
+    affect: input.affect,
+    userGender: input.userGender,
+    vocalizations: input.vocalizations,
+    switchTopic: input.switchTopic,
+    lastAskedQuestion: input.lastAskedQuestion,
+    userSaid: input.userSaid,
+    recentAsked: input.recentAsked,
+    recentSummary: input.recentSummary,
+    farewell: input.farewell,
     curiosityHint: input.frame === 'coach' ? undefined : (input.curiosityHint ?? buildCuriosityHint(ctx.coverage)),
+    goalFollowUp: input.goalFollowUp,
     timeBlock: formatTimeBlock(ctx.time.timeContext, ctx.time.upcoming, ctx.time.careHint),
     goalBlock: formatGoalBlock(ctx.goals),
     safetyBlock: input.safetyAction?.action === 'refer' ? formatCrisisResources() : undefined,

@@ -69,29 +69,19 @@ export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): num
 }
 
 export class TurnTakingController {
-  // —— 跨模块共享状态（CallSession 也会读写）——
-  // 归属约定：字段「所有权」在 turnTaking（状态机读它们做计时/决策），但 CallSession
-  // 在少数会话生命周期点直接写。每加一个字段，先在这里登记「谁在哪个点写」，否则会回到
-  // 「一个字段两个文件改」的漂移。现有写点：
-  //   pendingVocals         session 写：NLS 事件 add / 每轮 drain（reset+list+dominant）
-  //   lastUserTurn          session 写：onAsrResult 捕获本轮 / recordTurnOutcome 清空
-  //   reanswerCount         session 写：onAsrResult、recordTurnOutcome 清零（turnTaking 自增）
-  //   lastTurnAskedQuestion session 写：proactive / recordTurnOutcome / playCachedGreeting 记「是否在问」
-  //   lastWasFarewell       session 写：farewell/coachClose 置 true；onPlaybackEnd 读+清
-  //   idleFired             session 写：招呼语刚播完 / farewell 触发后置 true
-  //   lastUserVoiceAt       session 写：cleanupInterrupted 重置静默基准
-  //   lastReplyLatencyMs    session 只读：disinterest 判定 + transcript 落库
-  // 纯 turnTaking 内部（session 不碰）：agentDoneAt / lastBargeInAt / lastVocalRespondAt /
-  //   noReplyStreak / coachCheckinDone / pendingInterrupt + 全部计时器
-  lastUserVoiceAt = Date.now();
-  lastReplyLatencyMs = 0;
-  agentDoneAt = 0;
-  lastUserTurn: { text: string; vocals: VocalizationEvent[]; dominantVocal: DominantVocal } | null = null;
-  reanswerCount = 0;
-  lastTurnAskedQuestion = false;
-  lastWasFarewell = false;
-  idleFired = false;
-  pendingVocals = new VocalEventAggregator();
+  // —— 会话级共享状态（CallSession 经下方窄方法读/写，不直接碰字段）——
+  // 之前这些字段是 public、由 CallSession 直接写，靠一张「谁在哪个点写」的手工表维持一致；
+  // 现收敛为窄方法（recordVocal / captureTurn / markAsked / markFarewell / …），
+  // 所有权从注释变成方法签名——新增状态要么加方法、要么不暴露，编译器兜底。
+  private lastUserVoiceAt = Date.now();
+  private lastReplyLatencyMs = 0;
+  private agentDoneAt = 0;
+  private lastUserTurn: { text: string; vocals: VocalizationEvent[]; dominantVocal: DominantVocal } | null = null;
+  private reanswerCount = 0;
+  private lastTurnAskedQuestion = false;
+  private lastWasFarewell = false;
+  private idleFired = false;
+  private pendingVocals = new VocalEventAggregator();
 
   // —— 纯本模块内部状态 ——
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,6 +111,71 @@ export class TurnTakingController {
     this.lastUserTurn = null;
     this.reanswerCount = 0;
     this.pendingVocals = new VocalEventAggregator();
+  }
+
+  // —— 供 CallSession 借用的窄方法（替代直接写 private 字段；所有权 = 方法签名）——
+
+  // NLS 声音事件到达：进聚合器，去抖后由 scheduleVocalRespond 触发 respond。
+  recordVocal(ev: VocalizationEvent): void {
+    this.pendingVocals.add(ev);
+  }
+
+  // 读当前主导发声（不消耗，log 用）。
+  get dominantVocal(): DominantVocal {
+    return this.pendingVocals.dominant();
+  }
+
+  // 一轮收尾：取出本轮累计的哭/笑事件并清空（onAsrResult final 捕获 + 传给 respond）。
+  drainVocals(): { vocals: VocalizationEvent[]; dominantVocal: DominantVocal } {
+    const vocals = this.pendingVocals.list;
+    const dominantVocal = this.pendingVocals.dominant();
+    this.pendingVocals.reset();
+    return { vocals, dominantVocal };
+  }
+
+  // 捕获本轮用户话（onAsrResult final）：记 lastUserTurn 供误打断重答，清 reanswer 计数/定时器。
+  captureTurn(text: string, vocals: VocalizationEvent[], dominantVocal: DominantVocal): void {
+    this.lastUserTurn = { text, vocals, dominantVocal };
+    this.reanswerCount = 0;
+    this.clearReanswer();
+  }
+
+  // 一轮成功出句后：清掉「上一句在等回应」的捕获。
+  clearCapturedTurn(): void {
+    this.lastUserTurn = null;
+    this.reanswerCount = 0;
+  }
+
+  // 记「这一句是否在等对方回应」（proactive / recordTurnOutcome / playCachedGreeting 三处共用）。
+  markAsked(asked: boolean): void {
+    this.lastTurnAskedQuestion = asked;
+  }
+
+  // 记「是否已进入道别收尾」（farewell / coachClose 置 true）。
+  markFarewell(done: boolean): void {
+    this.lastWasFarewell = done;
+  }
+
+  // 读完并清除道别标记（onPlaybackEnd：若刚说完道别 → scheduleHangup）。
+  consumeFarewell(): boolean {
+    const v = this.lastWasFarewell;
+    this.lastWasFarewell = false;
+    return v;
+  }
+
+  // 标记「招呼语已播 / 已收尾，别再主动发话」。
+  setIdleFired(): void {
+    this.idleFired = true;
+  }
+
+  // 静默基准后移（cleanupInterrupted 半路被打断时用）。
+  touchUserVoice(): void {
+    this.lastUserVoiceAt = Date.now();
+  }
+
+  // 只读：上一轮回复延迟（disinterest 判定 + transcript 落库用）。
+  get replyLatencyMs(): number {
+    return this.lastReplyLatencyMs;
   }
 
   // 用户开声：刷新静默计时、清掉「上一句在等回应」等标记。

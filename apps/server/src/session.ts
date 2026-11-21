@@ -65,7 +65,7 @@ import { planTurn, type TurnPlan } from './brain/turn';
 import { evaluateDisinterest, evaluatePerfunctory } from './brain/topicSwitch';
 import { generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/assemble';
-import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
+import { consolidateAfterTurn } from './brain/consolidate';
 import { classifyMemory } from './brain/memoryClassifier';
 import { GenerationGate } from './brain/generationGate';
 import { correctAsrText } from './brain/asrCorrect';
@@ -383,8 +383,7 @@ export class CallSession {
           this.speaking = false;
           this.agentAudible = false;
           this.turnTaking.markAgentDone();
-          if (this.turnTaking.lastWasFarewell) {
-            this.turnTaking.lastWasFarewell = false;
+          if (this.turnTaking.consumeFarewell()) {
             this.turnTaking.scheduleHangup();
           }
           this.turnTaking.armIdleCheck();
@@ -423,7 +422,7 @@ export class CallSession {
 
     // 一联通就打招呼（异步、不阻塞响应）：优先缓存片段，预热失败回退 LLM 生成。
     const greetVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
-    this.turnTaking.idleFired = true;
+    this.turnTaking.setIdleFired();
     void (async () => {
       try {
         await this.greetingClips.ensure(greetVoice, this.persona.name, this.persona.voiceTint, this.persona.rate ?? 1.0, this.lang);
@@ -465,8 +464,8 @@ export class CallSession {
           akSecret: this.cfg.nlsAkSecret || undefined,
         },
         (ev) => {
-          this.turnTaking.pendingVocals.add(ev);
-          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.turnTaking.pendingVocals.dominant());
+          this.turnTaking.recordVocal(ev);
+          console.log('[NLS] 非言语发声：', JSON.stringify(ev), '主导：', this.turnTaking.dominantVocal);
           this.turnTaking.scheduleVocalRespond();
         },
       );
@@ -513,14 +512,10 @@ export class CallSession {
           this.lang = detected;
           console.log(`[lang] 根据对方说话自动切到：${this.lang}`);
         }
-        const vocals = this.turnTaking.pendingVocals.list;
-        const dominantVocal = this.turnTaking.pendingVocals.dominant();
-        this.turnTaking.pendingVocals.reset();
+        const { vocals, dominantVocal } = this.turnTaking.drainVocals();
         this.turnTaking.clearVocalTimer();
         this.backchannel.onTurnEnd();
-        this.turnTaking.lastUserTurn = { text: cleanText, vocals, dominantVocal };
-        this.turnTaking.reanswerCount = 0;
-        this.turnTaking.clearReanswer();
+        this.turnTaking.captureTurn(cleanText, vocals, dominantVocal);
         this.rtc?.sendControl({ type: 'transcript', role: 'user', text: cleanText });
         this.respond(cleanText, vocals, dominantVocal).catch(console.error);
       }
@@ -596,7 +591,7 @@ export class CallSession {
     if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
     this.lastAffect = plan.affect;
-    const disinterest = evaluateDisinterest(plan.affect.arousal, this.turnTaking.lastReplyLatencyMs, this.disinterestStreak);
+    const disinterest = evaluateDisinterest(plan.affect.arousal, this.turnTaking.replyLatencyMs, this.disinterestStreak);
     this.disinterestStreak = disinterest.streak;
     const perfunctory = evaluatePerfunctory(userText, this.perfunctoryStreak);
     this.perfunctoryStreak = perfunctory.streak;
@@ -731,9 +726,9 @@ export class CallSession {
         reachedEnd = true;
         this.rtc?.end();
         const asked = awaits !== null ? awaits : isAsking(seg);
-        this.turnTaking.lastTurnAskedQuestion = asked;
+        this.turnTaking.markAsked(asked);
         if (asked) this.lastQuestionText = seg; else this.lastQuestionText = '';
-        if (kind === 'farewell' || kind === 'coachClose') this.turnTaking.lastWasFarewell = true;
+        if (kind === 'farewell' || kind === 'coachClose') this.turnTaking.markFarewell(true);
         this.recordTranscript('agent', seg, {
           emotion: 'natural',
           frame: this.coachTracker.current,
@@ -797,7 +792,7 @@ export class CallSession {
     console.log('[greeting] 播放缓存招呼语');
     this.speaking = true;
     this.agentAudible = true;
-    this.turnTaking.lastTurnAskedQuestion = false;
+    this.turnTaking.markAsked(false);
     this.rtc.pushAgentPcm(pick.clip);
     this.rtc.end();
     if (pick.phrase) {
@@ -816,7 +811,7 @@ export class CallSession {
     if (this.gate.isCurrent(myGen) && !reachedEnd) {
       this.speaking = false;
       this.agentAudible = false;
-      this.turnTaking.lastUserVoiceAt = Date.now();
+      this.turnTaking.touchUserVoice();
       this.turnTaking.armIdleCheck();
     }
   }
@@ -834,8 +829,7 @@ export class CallSession {
     firstTokenMs: number;
   }): void {
     const { plan, ctx, userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs } = opts;
-    this.turnTaking.lastUserTurn = null;
-    this.turnTaking.reanswerCount = 0;
+    this.turnTaking.clearCapturedTurn();
     this.history.push({ kind: 'turn', role: 'user', text: userText });
     const agentText = fullText.trim();
     if (agentText) this.history.push({ kind: 'turn', role: 'agent', text: agentText });
@@ -848,7 +842,7 @@ export class CallSession {
       affect: plan.affect,
       acoustic: acoustics,
       vocals: vocals.length ? vocals : undefined,
-      latencyMs: this.turnTaking.lastReplyLatencyMs || null,
+      latencyMs: this.turnTaking.replyLatencyMs || null,
     });
     if (agentText) {
       this.recordTranscript('agent', agentText, {
@@ -867,14 +861,14 @@ export class CallSession {
         asked,
       });
     }
-    this.turnTaking.lastTurnAskedQuestion = asked;
+    this.turnTaking.markAsked(asked);
     this.lastQuestionText = asked ? agentText : '';
     if (asked && agentText) this.askedQuestions.record(this.persona.name, this.userId, agentText).catch(() => {});
     if (asked) this.consecutiveQuestions++; else this.consecutiveQuestions = 0;
     if (plan.farewell) {
-      this.turnTaking.lastTurnAskedQuestion = false;
-      this.turnTaking.lastWasFarewell = true;
-      this.turnTaking.idleFired = true;
+      this.turnTaking.markAsked(false);
+      this.turnTaking.markFarewell(true);
+      this.turnTaking.setIdleFired();
     }
 
     consolidateAfterTurn({
