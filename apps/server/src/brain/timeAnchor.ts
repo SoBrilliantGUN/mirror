@@ -148,7 +148,7 @@ const DAY_OFFSET: [string, number][] = [
 
 function dateLabel(d: Date): string {
   const p = shanghaiParts(d);
-  return `${p.month}月${p.day}日`;
+  return `${p.year}年${p.month}月${p.day}日`;
 }
 
 // 从一段文本里程序化抽出时间锚点；找不到返回 undefined。
@@ -240,15 +240,23 @@ export function parseTimeAnchor(text: string, now: Date): TimeAnchor | undefined
   return undefined;
 }
 
-// 把 content 里的相对时间词替换成折算后的具体日期（绝对措辞），相对词失效问题一并解决。
+// 相对日根（省「天」直接接时段词，如「昨晚/明早/前夜」）+ 偏移天数。长词在前避免「大前天」被「前天」截胡。
+const REL_DAY_OFF: Record<string, number> = { 大前: -3, 大后: 3, 前: -2, 后: 2, 昨: -1, 明: 1, 今: 0 };
+// 时段词跟在日根后；「天」= 纯「日」（不带时段），其余（晚/早/晨/午/夜…）原样保留。
+const TIME_OF_DAY = ['晚上', '早晨', '早上', '上午', '中午', '下午', '傍晚', '凌晨', '夜里', '夜晚', '晚', '早', '晨', '午', '夜', '天'];
+const REL_DAY_RE = new RegExp(`(${Object.keys(REL_DAY_OFF).join('|')})(${TIME_OF_DAY.join('|')})`, 'g');
+
+// 把 content 里的相对时间词替换成折算后的具体日期（带年份的绝对措辞），相对词失效问题一并解决。
 export function rewriteRelativeTime(text: string, now: Date): string {
   let out = text;
   const p = shanghaiParts(now);
   const today = startOfDay(now);
 
-  for (const [word, off] of DAY_OFFSET) {
-    out = out.replaceAll(word, dateLabel(new Date(today.getTime() + off * DAY_MS)));
-  }
+  // 相对日（含「昨晚/明早」这类省「天」的复合形式）→ X年X月X日 + 时段
+  out = out.replace(REL_DAY_RE, (_m, root: string, tod: string) => {
+    const d = new Date(today.getTime() + REL_DAY_OFF[root] * DAY_MS);
+    return dateLabel(d) + (tod === '天' ? '' : tod);
+  });
   out = out.replace(/(这|本|下|上)(?:周|星期|礼拜)([一二三四五六日天])/g, (_, wk: string, wd: string) => {
     const target = WEEKDAY_MAP[wd];
     const delta = target - p.weekday;
@@ -260,7 +268,7 @@ export function rewriteRelativeTime(text: string, now: Date): string {
     if (dir === '下') { mo += 1; if (mo === 13) { mo = 1; y += 1; } }
     else { mo -= 1; if (mo === 0) { mo = 12; y -= 1; } }
     const d = parseDay(dayRaw);
-    return d != null ? `${mo}月${d}日` : `${mo}月`;
+    return d != null ? `${y}年${mo}月${d}日` : `${y}年${mo}月`;
   });
   out = out.replace(new RegExp(`(明|去|前)年\\s*${MONTH_FIELD}月${DAY_FIELD}[日号]?`, 'g'), (_, dir: string, moRaw: string, dayRaw: string) => {
     let y = p.year;

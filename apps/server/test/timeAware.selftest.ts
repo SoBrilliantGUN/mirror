@@ -104,18 +104,27 @@ ok('无时间 → undefined', () => {
   assert.equal(parseTimeAnchor('对方喜欢喝咖啡', NOV12_0215), undefined);
 });
 
-console.log('rewriteRelativeTime（相对词改写为绝对日期）');
-ok('明天 → 具体日期', () => {
-  assert.equal(rewriteRelativeTime('对方明天有面试', NOV12_0215), '对方11月13日有面试');
+console.log('rewriteRelativeTime（相对词改写为带年份的绝对日期）');
+ok('明天 → 具体日期（带年份）', () => {
+  assert.equal(rewriteRelativeTime('对方明天有面试', NOV12_0215), '对方2026年11月13日有面试');
 });
-ok('下周三 → 具体日期', () => {
-  assert.equal(rewriteRelativeTime('对方下周三有面试', NOV12_0215), '对方11月18日有面试');
+ok('下周三 → 具体日期（带年份）', () => {
+  assert.equal(rewriteRelativeTime('对方下周三有面试', NOV12_0215), '对方2026年11月18日有面试');
 });
 ok('多个相对词都替换', () => {
-  assert.equal(rewriteRelativeTime('对方明天和后天都有事', NOV12_0215), '对方11月13日和11月14日都有事');
+  assert.equal(rewriteRelativeTime('对方明天和后天都有事', NOV12_0215), '对方2026年11月13日和2026年11月14日都有事');
 });
 ok('无相对词 → 原样', () => {
   assert.equal(rewriteRelativeTime('对方生日是11月13日', NOV12_0215), '对方生日是11月13日');
+});
+ok('「昨晚」省「天」复合词 → 带年份日期 + 时段', () => {
+  assert.equal(rewriteRelativeTime('对方昨晚加班到很晚', NOV12_0215), '对方2026年11月11日晚加班到很晚');
+});
+ok('「明早」复合词', () => {
+  assert.equal(rewriteRelativeTime('对方明早要去机场', NOV12_0215), '对方2026年11月13日早要去机场');
+});
+ok('「今天晚上」完整形式', () => {
+  assert.equal(rewriteRelativeTime('对方今天晚上有约', NOV12_0215), '对方2026年11月12日晚上有约');
 });
 
 console.log('currentTimeContext（时间上下文纯函数，东八区）');
