@@ -30,6 +30,9 @@ export interface Settings {
   nlsToken?: string;
   nlsAkId?: string;
   nlsAkSecret?: string;
+  maximize?: boolean;               // 启动时最大化（关 = 用 windowWidth/Height）
+  windowWidth?: number;             // 窗口宽度 px（空则默认屏幕 85%）
+  windowHeight?: number;            // 窗口高度 px（空则默认屏幕 85%）
 }
 
 // 需要加密保存的字段（密钥/令牌/访问凭据）。base URL、音色 ID 等非敏感信息明文。

@@ -23,4 +23,7 @@ export interface Settings {
   nlsToken?: string;
   nlsAkId?: string;
   nlsAkSecret?: string;
+  maximize?: boolean;
+  windowWidth?: number;
+  windowHeight?: number;
 }

@@ -104,6 +104,24 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               {f('nlsToken', 'NLS Token（优先）', { secret: true })}
               {f('nlsAkId', 'AccessKey ID')}
               {f('nlsAkSecret', 'AccessKey Secret', { secret: true })}
+
+              <h5 className="settings-h5">窗口（重启后生效）</h5>
+              <label className="sfield">
+                <span className="sf-label">启动时最大化</span>
+                <input type="checkbox" checked={!!s.maximize} onChange={(e) => setS((p) => ({ ...p, maximize: e.target.checked }))} />
+              </label>
+              {!s.maximize && (
+                <>
+                  <label className="sfield">
+                    <span className="sf-label">窗口宽度（px，留空 = 屏幕 85%）</span>
+                    <input type="number" value={s.windowWidth ?? ''} placeholder="留空 = 屏幕 85%" min={400} onChange={(e) => setS((p) => ({ ...p, windowWidth: e.target.value === '' ? undefined : Number(e.target.value) }))} />
+                  </label>
+                  <label className="sfield">
+                    <span className="sf-label">窗口高度（px，留空 = 屏幕 85%）</span>
+                    <input type="number" value={s.windowHeight ?? ''} placeholder="留空 = 屏幕 85%" min={300} onChange={(e) => setS((p) => ({ ...p, windowHeight: e.target.value === '' ? undefined : Number(e.target.value) }))} />
+                  </label>
+                </>
+              )}
             </div>
           )}
 

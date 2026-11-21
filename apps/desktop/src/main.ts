@@ -1,5 +1,5 @@
 // Electron 主进程：起内嵌 PG → 起 server 子进程 → 静态服务喂前端 → 开窗口 + 设置 IPC。
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, Tray } from 'electron';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -86,10 +86,15 @@ async function bootBackend(): Promise<void> {
 }
 
 function createWindow(): Promise<void> {
+  // 窗口大小：设置里填了就用（≥最小尺寸），否则默认屏幕 85%；「最大化」则启动即最大化。
+  const s = loadSettings();
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  const width = s.windowWidth && s.windowWidth >= 400 ? s.windowWidth : Math.round(workAreaSize.width * 0.85);
+  const height = s.windowHeight && s.windowHeight >= 300 ? s.windowHeight : Math.round(workAreaSize.height * 0.85);
   return new Promise((resolve) => {
     mainWindow = new BrowserWindow({
-      width: 1180,
-      height: 780,
+      width,
+      height,
       minWidth: 900,
       minHeight: 620,
       title: 'mirror · 生活教练陪伴',
@@ -101,6 +106,7 @@ function createWindow(): Promise<void> {
         nodeIntegration: false,
       },
     });
+    if (s.maximize) mainWindow.maximize();
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('http')) shell.openExternal(url);
       return { action: 'deny' };
