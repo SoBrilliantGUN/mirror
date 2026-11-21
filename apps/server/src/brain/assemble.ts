@@ -248,6 +248,7 @@ export function buildTurnMessages(ctx: RecalledContext, memoryBudget: number, in
     userGender: input.userGender,
     vocalizations: input.vocalizations,
     switchTopic: input.switchTopic,
+    recommendedTopic: input.recommendedTopic,
     lastAskedQuestion: input.lastAskedQuestion,
     userSaid: input.userSaid,
     recentAsked: input.recentAsked,
