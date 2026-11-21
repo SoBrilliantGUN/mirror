@@ -1,0 +1,5 @@
+{ "dimension": "重大事件", "aspects": [
+  { "aspect": "转折点", "questions": [ { "text": "你人生有没有哪个决定彻底改变了你？" } ] },
+  { "aspect": "成就", "questions": [ { "text": "你做过最让自己骄傲的一件事是什么？" } ] },
+  { "aspect": "低谷", "questions": [ { "text": "你有没有经历过一段特别难熬的日子？" } ] }
+] }

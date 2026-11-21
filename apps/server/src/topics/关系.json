@@ -1,0 +1,5 @@
+{ "dimension": "关系", "aspects": [
+  { "aspect": "伴侣", "questions": [ { "text": "你现在有对象吗？" }, { "text": "你理想中的另一半是什么样的？" } ] },
+  { "aspect": "朋友", "questions": [ { "text": "你最好的朋友是谁？" }, { "text": "你们是怎么认识的？" } ] },
+  { "aspect": "重要的人", "questions": [ { "text": "你生命里对你影响最大的人是谁？" } ] }
+] }

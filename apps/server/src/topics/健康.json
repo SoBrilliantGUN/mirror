@@ -1,0 +1,5 @@
+{ "dimension": "健康", "aspects": [
+  { "aspect": "身体", "questions": [ { "text": "你平时会运动吗？" } ] },
+  { "aspect": "作息", "questions": [ { "text": "你一般几点睡？" }, { "text": "你睡眠质量怎么样？" } ] },
+  { "aspect": "心理", "questions": [ { "text": "你最近心情怎么样？" }, { "text": "压力大的时候你会怎么排解？" } ] }
+] }

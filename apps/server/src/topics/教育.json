@@ -1,0 +1,5 @@
+{ "dimension": "教育", "aspects": [
+  { "aspect": "学校", "questions": [ { "text": "你大学在哪儿上的啊？" }, { "text": "你上学时最喜欢哪门课？" } ] },
+  { "aspect": "专业", "questions": [ { "text": "你大学学的是什么专业？" }, { "text": "你当初为什么选这个专业？" } ] },
+  { "aspect": "学习经历", "questions": [ { "text": "你上学时成绩怎么样？" }, { "text": "有没有哪个老师对你影响挺大？" } ] }
+] }

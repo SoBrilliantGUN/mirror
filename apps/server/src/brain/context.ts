@@ -232,6 +232,7 @@ export type TurnPromptSignals = {
   recentSummary?: string; // 最近 3 天对话概要（跨通话）→ 注入 [RECENT]，让陪伴者自然接上最近话题
   farewell?: boolean; // 对方这一轮在道别 → 注入 [FAREWELL] 块，回一句道别收尾、不再追问/开新话题
   curiosityHint?: string; // 好奇心线索（预格式化好的 [CURIOSITY] 块），注入当软信号
+  recommendedTopic?: string; // 换话题时的具体推荐话题（好奇心机制挑出的「问题 + 素材」）
   goalFollowUp?: string; // [FOLLOW_UP] 主动追问（新通话首轮、每通一次，空则省略）
 };
 
@@ -275,6 +276,10 @@ export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
 
   if (input.curiosityHint) {
     parts.push(input.curiosityHint);
+  }
+
+  if (input.recommendedTopic) {
+    parts.push(`[推荐话题] 换个话题时，你可以直接这样问对方（自然一点、别像念题，别一次抛好几个）：${input.recommendedTopic}`);
   }
 
   if (input.switchTopic) {

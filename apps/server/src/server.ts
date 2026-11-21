@@ -21,6 +21,7 @@ import { createPool, ensureSchema } from './store/db';
 import { createSessionsStore } from './store/sessions';
 import { createTranscriptStore } from './store/transcript';
 import { createTopicsStore } from './store/topics';
+import { createAskedTopicsStore } from './store/askedTopics';
 import { createObs } from './obs/langfuse';
 import { createRouter } from './router';
 import { CallSession } from './session';
@@ -59,6 +60,7 @@ export async function main() {
   const identity = createIdentityStore(pool); // 结构化身份：字段单值覆盖（做梦时反思抽取）
   const dreamRuns = createDreamRunsStore(pool); // 做梦运行记录（前端展示用）
   const topics = createTopicsStore(pool); // 话题参与 + 备用话题库（每通电话结束后分析）
+  const askedTopics = createAskedTopicsStore(pool); // 已问过的好奇心话题 id（去重）
   const holidayMap = await loadHolidayMap(shanghaiParts(new Date()).year); // 节假日/工作日判定
   const timeAware = createTimeAware(memory, holidayMap); // 时间感知（L5）
   const summarizer = createSummarizer(llm, cfg.llm.generateModel);
@@ -71,7 +73,7 @@ export async function main() {
   // 单会话编排：一通电话的所有实时状态与流程（ASR→L3→TTS + 主动发话 + 抢话）。
   const session = new CallSession({
     cfg, llm, safetyLlm, embedder, memory, askedQuestions, conversationSummaries,
-    selfAdded, goals, identity, sessions, transcript, topics, obs, timeAware, summarizer, memoryBudget, historyBudget, userId,
+    selfAdded, goals, identity, sessions, transcript, topics, askedTopics, obs, timeAware, summarizer, memoryBudget, historyBudget, userId,
   });
   session.preloadGreetings(); // 启动即预热上线人物的招呼语（第一句秒回）
 

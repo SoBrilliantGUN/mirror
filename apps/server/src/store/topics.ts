@@ -10,13 +10,25 @@ export function createTopicsStore(pool: Pool) {
     async recordEngagement(
       personaName: string,
       userId: string,
-      e: { topic: string; sessionId: string | null; engaged: boolean; turns: number },
+      e: { topic: string; dimension: string | null; sessionId: string | null; engaged: boolean; turns: number },
     ): Promise<void> {
       await pool.query(
-        `INSERT INTO topic_engagements (persona_name, user_id, topic, session_id, engaged, turns)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [personaName, userId, e.topic, e.sessionId, e.engaged, e.turns],
+        `INSERT INTO topic_engagements (persona_name, user_id, topic, dimension, session_id, engaged, turns)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [personaName, userId, e.topic, e.dimension, e.sessionId, e.engaged, e.turns],
       );
+    },
+
+    // 每个维度的「兴趣」：该维度下自由主题深入聊过的会话数（好奇心打分用）。
+    async dimensionEngagement(personaName: string, userId: string): Promise<Map<string, number>> {
+      const { rows } = await pool.query(
+        `SELECT dimension, COUNT(DISTINCT session_id) FILTER (WHERE engaged) AS engaged_sessions
+           FROM topic_engagements
+          WHERE persona_name = $1 AND user_id = $2 AND dimension IS NOT NULL AND dimension <> ''
+          GROUP BY dimension`,
+        [personaName, userId],
+      );
+      return new Map(rows.map((r) => [r.dimension as string, Number(r.engaged_sessions)]));
     },
 
     // 每个主题出现在几通电话里（按 session 去重）+ 深入聊过的通话数。

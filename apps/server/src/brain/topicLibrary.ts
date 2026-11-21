@@ -13,11 +13,12 @@ const TOPIC_EXTRACT_SYSTEM = `你是话题抽取助手。读「一段对话」�
 - engaged=false：只是被陪伴者问到、简单带过（「嗯」「对」「还行」），没真聊。
 
 turns = 这个主题大概聊了几轮（整数）。
+dimension = 这个主题属于哪个维度（从这些里选一个：原生家庭/教育/职业/关系/爱好/重大事件/宠物/旅行/价值观/健康；实在对不上就留空字符串）。
 
 只输出 JSON，不要解释、不要 markdown：
-{"topics":[{"topic":"<主题>","engaged":true|false,"turns":<数字>}]}`;
+{"topics":[{"topic":"<主题>","dimension":"<维度或空>","engaged":true|false,"turns":<数字>}]}`;
 
-export type ExtractedTopic = { topic: string; engaged: boolean; turns: number };
+export type ExtractedTopic = { topic: string; dimension: string | null; engaged: boolean; turns: number };
 
 // 纯函数：从抽取输出里解析 topics 列表。可单测。
 export function parseTopics(raw: string): ExtractedTopic[] {
@@ -29,6 +30,7 @@ export function parseTopics(raw: string): ExtractedTopic[] {
       const x = (t ?? {}) as Record<string, unknown>;
       return {
         topic: String(x.topic ?? '').trim(),
+        dimension: String(x.dimension ?? '').trim() || null,
         engaged: x.engaged === true || x.engaged === 'true',
         turns: Number(x.turns) || 0,
       };
@@ -73,7 +75,7 @@ export async function analyzeSessionTopics(deps: {
   let wrote = 0;
   for (const t of extracted) {
     try {
-      await topics.recordEngagement(personaName, userId, { topic: t.topic, sessionId, engaged: t.engaged, turns: t.turns });
+      await topics.recordEngagement(personaName, userId, { topic: t.topic, dimension: t.dimension, sessionId, engaged: t.engaged, turns: t.turns });
       wrote++;
     } catch (e) {
       console.warn('[topic] 写话题参与失败：', e);

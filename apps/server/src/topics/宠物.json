@@ -1,0 +1,3 @@
+{ "dimension": "宠物", "aspects": [
+  { "aspect": "宠物", "questions": [ { "text": "你有养猫猫狗狗吗？" }, { "text": "你最喜欢什么小动物？" } ] }
+] }

@@ -40,3 +40,8 @@ export function evaluatePerfunctory(
   const streak = prevStreak + 1;
   return { streak, switchTopic: streak >= PERFUNCTORY_LIMIT };
 }
+
+// 显式换话题请求：对方直接说「换个话题 / 聊点别的 / 换一个话题」，绕过上面三个间接信号，直接触发换话题。
+export function isExplicitTopicSwitch(text: string): boolean {
+  return /换个话题|换一个话题|换话题|聊点别的|聊别的|再找个话题/.test(text ?? '');
+}

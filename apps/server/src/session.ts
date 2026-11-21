@@ -62,7 +62,7 @@ import { ConversationFlowController, DEFAULT_TIMING, type ConversationFlowTiming
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { planTurn, type TurnPlan } from './brain/turn';
-import { evaluateDisinterest, evaluatePerfunctory } from './brain/topicSwitch';
+import { evaluateDisinterest, evaluatePerfunctory, isExplicitTopicSwitch } from './brain/topicSwitch';
 import { generateProactiveText, extractAwaits } from './brain/generate';
 import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/assemble';
 import { consolidateAfterTurn } from './brain/consolidate';
@@ -82,7 +82,9 @@ import { createTranscriptStore, type TurnInsert } from './store/transcript';
 import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
 import { analyzeSessionTopics, refreshTopicLibrary } from './brain/topicLibrary';
+import { pickCuriosityTopic, latestEventByDimension, type CuriosityPick } from './brain/curiosity';
 import type { TopicsStore } from './store/topics';
+import type { AskedTopicsStore } from './store/askedTopics';
 
 // 语气词附和（「嗯/哦/啊/好/对/是/唔」及其重复）：抢话语境下判定为附和、不算真实打断。
 function isFillerText(text: string): boolean {
@@ -144,6 +146,7 @@ export type SessionDeps = {
   sessions: ReturnType<typeof createSessionsStore>;
   transcript: ReturnType<typeof createTranscriptStore>;
   topics: TopicsStore;
+  askedTopics: AskedTopicsStore;
   obs: Obs;
   timeAware: TimeAware;
   summarizer: HistorySummarizer;
@@ -174,6 +177,7 @@ export class CallSession {
   private readonly sessions: SessionDeps['sessions'];
   private readonly transcript: SessionDeps['transcript'];
   private readonly topics: TopicsStore;
+  private readonly askedTopics: AskedTopicsStore;
   private readonly obs: Obs;
   private readonly timeAware: TimeAware;
   private readonly summarizer: HistorySummarizer;
@@ -249,6 +253,7 @@ export class CallSession {
     this.sessions = deps.sessions;
     this.transcript = deps.transcript;
     this.topics = deps.topics;
+    this.askedTopics = deps.askedTopics;
     this.obs = deps.obs;
     this.timeAware = deps.timeAware;
     this.summarizer = deps.summarizer;
@@ -602,11 +607,20 @@ export class CallSession {
     const perfunctory = evaluatePerfunctory(userText, this.perfunctoryStreak);
     this.perfunctoryStreak = perfunctory.streak;
     const topicDrift = this.consecutiveQuestions >= TOPIC_DRIFT_LIMIT;
-    const switchTopic = plan.frame !== 'coach' && (disinterest.switchTopic || perfunctory.switchTopic || topicDrift);
+    const switchTopic = plan.frame !== 'coach' && (disinterest.switchTopic || perfunctory.switchTopic || topicDrift || isExplicitTopicSwitch(userText));
     if (switchTopic) {
       this.disinterestStreak = 0;
       this.perfunctoryStreak = 0;
       this.consecutiveQuestions = 0;
+    }
+    // 换话题时用好奇心机制挑一个具体推荐话题（加权随机选维度 → 维度下随机选未回答话题）。
+    let recommendedTopic = '';
+    if (switchTopic) {
+      const pick = await this.pickRecommendedTopic();
+      if (pick) {
+        recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+        void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
+      }
     }
     this.loadedDetails = ctx.loadedDetails;
     const curiosityHint = plan.frame === 'coach' ? this.lastCuriosityHint : (buildCuriosityHint(ctx.coverage) ?? '');
@@ -646,6 +660,7 @@ export class CallSession {
       recentAsked,
       recentSummary: this.recentSummaryText,
       curiosityHint,
+      recommendedTopic,
       searchEnabled,
     });
 
@@ -702,9 +717,15 @@ export class CallSession {
     }, async () => {
     try {
       let topicLibrary = '';
+      let recommendedTopic = '';
       if (kind === 'nudge' && this.coachTracker.current === 'friend') {
         const lib = await this.topics.listLibrary(this.persona.name, this.userId, 5).catch(() => []);
         if (lib.length > 0) topicLibrary = lib.map((e) => `-「${e.topic}」：${e.summary}`).join('\n');
+        const pick = await this.pickRecommendedTopic();
+        if (pick) {
+          recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+          void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
+        }
       }
       const system = buildProactiveSystemPrompt(
         kind,
@@ -715,6 +736,7 @@ export class CallSession {
           recentTurns: formatHistory(this.history.slice(-6)),
           mood: this.mood,
           topicLibrary,
+          recommendedTopic,
         },
       );
       const text = await generateProactiveText(this.llm, this.cfg.llm.generateModel, system);
@@ -931,6 +953,22 @@ export class CallSession {
       turnIndex: this.turnCount,
       ...extra,
     }).catch((e) => console.warn(`[transcript] ${role === 'user' ? '用户' : '陪伴者'}话落库失败：`, e));
+  }
+
+  // 好奇心机制：三个值相加 → 加权随机选维度 → 维度下随机选未回答话题。
+  private async pickRecommendedTopic(): Promise<CuriosityPick | null> {
+    try {
+      const [coverage, engagement, anchored, askedIds] = await Promise.all([
+        this.memory.getCoverage(this.persona.name, this.userId),
+        this.topics.dimensionEngagement(this.persona.name, this.userId),
+        this.memory.listAnchored(this.persona.name, this.userId),
+        this.askedTopics.listAsked(this.persona.name, this.userId),
+      ]);
+      return pickCuriosityTopic({ coverage, engagement, latestEventAt: latestEventByDimension(anchored), askedIds });
+    } catch (e) {
+      console.warn('[curiosity] 选话题失败：', e);
+      return null;
+    }
   }
 
   private sleep(ms: number): Promise<void> {

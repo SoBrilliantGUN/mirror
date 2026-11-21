@@ -232,11 +232,13 @@ export function buildProactiveSystemPrompt(
     recentTurns?: string;    // 已格式化的【最近对话】块（含头），空则省略
     mood?: MoodState | null; // 对方当前心境（EMA），据此定语气
     topicLibrary?: string;   // 备用话题库素材（搜罗的、对方深入聊过的方向），只喂给 nudge
+    recommendedTopic?: string; // 好奇心机制挑出的具体推荐话题，只喂给 nudge
   } = {},
 ): string {
   const lastQuestion = opts.lastQuestion;
   const curiosityHint = opts.curiosityHint;
   const topicLibrary = opts.topicLibrary;
+  const recommendedTopic = opts.recommendedTopic;
   const moodBlock = opts.mood
     ? `【对方此刻情绪】效价 ${opts.mood.valence.toFixed(2)} / 唤醒 ${opts.mood.arousal.toFixed(2)} / 支配 ${opts.mood.dominance.toFixed(2)}（-2..+2）。据此定你的语气和话题——对方情绪越沉，越别用轻快的新话题去拽，先顺着 TA 刚说的事轻轻接住。`
     : '';
@@ -262,6 +264,9 @@ export function buildProactiveSystemPrompt(
     ...(curiosityHint && kind === 'nudge' ? [curiosityHint] : []),
     ...(topicLibrary && kind === 'nudge'
       ? [`【备用话题】下面是你搜罗到的、对方确实深入聊过的方向，可以自然带出一个当话题（别硬塞、别生硬复述、别一次抛多个）：\n${topicLibrary}`]
+      : []),
+    ...(recommendedTopic && kind === 'nudge'
+      ? [`【推荐话题】你可以直接这样问对方（自然一点、别像念题）：${recommendedTopic}`]
       : []),
     '输出格式：直接输出这一句，不要解释、不要标签、不要括号、不要 emoji。在这句的最后（另起一行），额外输出机器标签 [[AWAITS:1]]（这句话在等对方回应/提问）或 [[AWAITS:0]]（只是陈述、不催回应），标签不要念出来。',
   ].join('\n\n');

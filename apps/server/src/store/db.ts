@@ -199,6 +199,7 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       persona_name text NOT NULL,
       user_id text NOT NULL,
       topic text NOT NULL,
+      dimension text,
       session_id uuid,
       engaged boolean NOT NULL DEFAULT false,
       turns int NOT NULL DEFAULT 0,
@@ -206,6 +207,8 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS topic_engagements_persona_user_topic_idx ON topic_engagements (persona_name, user_id, topic)`);
+  // 迁移：老库的 topic_engagements 没有 dimension 列，幂等补上。
+  await pool.query(`ALTER TABLE topic_engagements ADD COLUMN IF NOT EXISTS dimension text`);
 
   // 备用话题库：对「感兴趣」（>3 通且每通深入）的主题，搜网后总结的素材。按人物/用户隔离。
   await pool.query(`
@@ -219,4 +222,16 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS topic_library_persona_user_idx ON topic_library (persona_name, user_id, created_at DESC)`);
+
+  // 已问过的好奇心话题 id（去重）：按人物/用户隔离，question_id = 维度_子项_哈希码。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS asked_topics (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      persona_name text NOT NULL,
+      user_id text NOT NULL,
+      question_id text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (persona_name, user_id, question_id)
+    )
+  `);
 }

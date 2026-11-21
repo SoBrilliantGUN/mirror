@@ -1,0 +1,6 @@
+{ "dimension": "原生家庭", "aspects": [
+  { "aspect": "父母", "questions": [ { "text": "你爸妈是做什么的啊？" }, { "text": "你跟爸爸还是妈妈更亲？" } ] },
+  { "aspect": "童年", "questions": [ { "text": "你小时候是在哪儿长大的？" }, { "text": "你小时候有什么特别难忘的事吗？" } ] },
+  { "aspect": "兄弟姐妹", "questions": [ { "text": "你有兄弟姐妹吗？" }, { "text": "你们小时候关系怎么样？" } ] },
+  { "aspect": "家庭关系", "questions": [ { "text": "你现在多久跟家里联系一次？" } ] }
+] }

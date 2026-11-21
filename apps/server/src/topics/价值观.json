@@ -1,0 +1,4 @@
+{ "dimension": "价值观", "aspects": [
+  { "aspect": "信念", "questions": [ { "text": "你觉得做人最重要的是什么？" }, { "text": "有没有什么信念是你一直坚持的？" } ] },
+  { "aspect": "人生目标", "questions": [ { "text": "你理想的生活是什么样的？" } ] }
+] }

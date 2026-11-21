@@ -1,0 +1,4 @@
+{ "dimension": "爱好", "aspects": [
+  { "aspect": "兴趣爱好", "questions": [ { "text": "你平时休息喜欢干嘛？" }, { "text": "有没有什么爱好是你坚持了很久的？" } ] },
+  { "aspect": "特长", "questions": [ { "text": "你有什么别人夸你厉害的技能吗？" } ] }
+] }

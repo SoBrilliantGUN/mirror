@@ -1,0 +1,5 @@
+{ "dimension": "职业", "aspects": [
+  { "aspect": "工作", "questions": [ { "text": "你是做什么的啊？" }, { "text": "你现在这份工作做了多久了？" } ] },
+  { "aspect": "岗位", "questions": [ { "text": "你平时一天的工作是怎么过的？" } ] },
+  { "aspect": "公司", "questions": [ { "text": "你现在在什么公司？" }, { "text": "你公司氛围怎么样？" } ] }
+] }
