@@ -7,7 +7,7 @@
 //   「农历八月十五」         → periodic lunar 8/15        「下周三」          → absolute 下周该日
 //   「每周五」              → periodic weekly 5          「每月15号」        → periodic monthly 15
 //   「2024年3月15日」        → absolute 2024-03-15        「3月15日」         → absolute 今年该日
-import type { PeriodicRule, TimeAnchor } from '@mirror/contracts';
+import type { MemoryKind, PeriodicRule, TimeAnchor } from '@mirror/contracts';
 import { shanghaiParts, startOfDay } from './timezone';
 
 const WEEKDAY_CN = ['一', '二', '三', '四', '五', '六', '日'];
@@ -60,9 +60,15 @@ export function anchorLabel(a: TimeAnchor): string {
 // 状态性时间词：描述「记录当时」的瞬时状态（目前/正在/即将/现在/当前…），会过期、不能当永久事实。
 // 命中则在末尾标注记录日期，避免后续召回把「当时的快照」当成「现在仍然如此」。
 const TRANSIENT_TIME_RE = /目前|正在|即将|现在|当前|最近|眼下|这几天|这阵子/;
+// 内容里已含具体日期（含年份，或 M月D日/日号，或 YYYY-MM-DD），说明已有发生时间，不用再补「记录于」。
+const HAS_DATE_RE = /\d{4}\s*年|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*[日号]/;
 
-export function tagRecordedAt(content: string, now: Date): string {
-  if (!TRANSIENT_TIME_RE.test(content)) return content;
+export function tagRecordedAt(content: string, now: Date, kind?: MemoryKind): string {
+  if (content.includes('记录于')) return content; // 已标注，不重复
+  // 情节记忆必须带时间：有具体发生日期就保留，否则补「记录于」当兜底时间；
+  // 其它型只对状态性时间词补「记录于」，避免把瞬时状态当永久事实。
+  const need = kind === 'episodic' ? !HAS_DATE_RE.test(content) : TRANSIENT_TIME_RE.test(content);
+  if (!need) return content;
   const p = shanghaiParts(now);
   return `${content}（记录于${p.year}年${p.month}月${p.day}日）`;
 }

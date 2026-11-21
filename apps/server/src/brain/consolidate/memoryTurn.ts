@@ -88,8 +88,8 @@ export async function consolidateTurn(deps: {
       const anchor = parseTimeAnchor(content, now) ?? m.anchor;
       // content 里的相对词（明天/下周三）换成折算后的具体日期，避免存进去的「明天」过几天失效。
       const rewritten = rewriteRelativeTime(content, now);
-      // 「目前/正在/即将」这类状态词标注记录时间，避免把瞬时状态当永久事实。
-      const tagged = tagRecordedAt(rewritten, now);
+      // 时间标注：情节必须带时间（有具体日期保留、否则补「记录于」）；状态词也补「记录于」。
+      const tagged = tagRecordedAt(rewritten, now, kind);
       const mem = await store.write(personaName, userId, { kind, content: tagged, dimension: m.dimension || null, aspect: m.aspect || null, anchor: anchor ?? null });
       writtenIds.push(mem.id);
       wrote++;
