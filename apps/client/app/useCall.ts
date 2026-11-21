@@ -12,6 +12,8 @@ export function useCall(getServer: () => string) {
   const [muted, setMuted] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptRow[]>([]);
   const [safety, setSafety] = useState<SafetyInfo | null>(null);
+  const [agentSpeaking, setAgentSpeaking] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -96,6 +98,8 @@ export function useCall(getServer: () => string) {
     stopMedia();
     setStatus('');
     setSafety(null);
+    setAgentSpeaking(false);
+    setNotice(null);
     endedRef.current?.('hangup');
   }
 
@@ -104,6 +108,8 @@ export function useCall(getServer: () => string) {
     memoryRef.current = onMemory ?? null;
     setStatus('连接中…');
     setSafety(null);
+    setAgentSpeaking(false);
+    setNotice(null);
     setMuted(false);
     setTranscript([]);
     navigator.mediaDevices
@@ -122,6 +128,8 @@ export function useCall(getServer: () => string) {
             if (msg.type === 'hangup') hangup();
             if (msg.type === 'memory') memoryRef.current?.();
             if (msg.type === 'safety') setSafety({ level: msg.level, resources: msg.resources });
+            if (msg.type === 'speaking') setAgentSpeaking(Boolean(msg.value));
+            if (msg.type === 'notice') setNotice(String(msg.text ?? ''));
             if (msg.type === 'transcript') {
               if (msg.replace) {
                 // ASR 纠错后回传：替换最后一条用户原文。
@@ -189,5 +197,5 @@ export function useCall(getServer: () => string) {
     });
   }
 
-  return { status, muted, transcript, safety, start, hangup, toggleMute, dismissSafety: () => setSafety(null) };
+  return { status, muted, transcript, safety, agentSpeaking, notice, start, hangup, toggleMute, dismissSafety: () => setSafety(null), dismissNotice: () => setNotice(null) };
 }

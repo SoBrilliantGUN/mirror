@@ -114,6 +114,11 @@ function buildLanguagePrompt(base: string, lang: 'zh' | 'en', englishMode: 'imme
 // 是否在向用户提问（回退正则：优先用生成阶段顺带输出的 awaits 标签，漏打时用「句子里出现过问号」判断）。
 const isAsking = (text: string) => /[？?]/.test(text);
 
+// 额度耗尽等 API 配额类错误：识别出来给用户弹「额度不足」提示，而不是默默卡住。
+function isQuotaError(e: unknown): boolean {
+  return /429|402|401|limit_requests|quota|insufficient/i.test(String(e));
+}
+
 // string[] / AsyncIterable 统一成 AsyncIterator，供逐句流水线预取下一句用。
 // 从对方一句话判语言：含中文 → zh；纯英文 → en；无语义字符（嗯/哦/数字/标点）→ null（不切换，保持现状）。
 // 说话自动切换语言用，替代原来的中英文开关。
@@ -262,7 +267,7 @@ export class CallSession {
     this.tts = this.ttsFactory(
       buildTtsEndpoints(this.cfg.speech),
       (pcm) => this.rtc?.pushAgentPcm(pcm),
-      () => this.turnTaking.markAudible(),
+      () => { this.turnTaking.markAudible(); this.rtc?.sendControl({ type: 'speaking', value: true }); },
       (ms) => this.sleep(ms),
     );
     // 招呼语片段缓存：只管加载/落盘；播放与落库仍在本类。
@@ -381,6 +386,7 @@ export class CallSession {
         onInterrupt: () => this.turnTaking.handleBargeIn('rtc'),
         onPlaybackEnd: () => {
           this.turnTaking.markAgentDone();
+          this.rtc?.sendControl({ type: 'speaking', value: false });
           if (this.turnTaking.consumeFarewell()) {
             this.turnTaking.scheduleHangup();
           }
@@ -672,6 +678,13 @@ export class CallSession {
       reachedEnd = true;
       this.recordTurnOutcome({ plan, ctx, userText: corrected, rawText: this.lastRawAsrText, nameCorrected: userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
     }
+    } catch (e) {
+      if (isQuotaError(e)) {
+        console.warn('[respond] 服务额度不足：', e);
+        this.rtc?.sendControl({ type: 'notice', text: '服务额度不足，请检查 API key 余额后重试' });
+      } else {
+        console.warn('[respond] 出句失败：', e);
+      }
     } finally {
       this.cleanupInterrupted(myGen, reachedEnd);
     }
@@ -800,6 +813,7 @@ export class CallSession {
     console.log('[greeting] 播放缓存招呼语');
     this.turnTaking.beginTurn();
     this.turnTaking.markAudible();
+    this.rtc?.sendControl({ type: 'speaking', value: true });
     this.turnTaking.markAsked(false);
     this.rtc.pushAgentPcm(pick.clip);
     this.rtc.end();
@@ -818,6 +832,7 @@ export class CallSession {
   private cleanupInterrupted(myGen: number, reachedEnd: boolean): void {
     if (this.gate.isCurrent(myGen) && !reachedEnd) {
       this.turnTaking.stopSpeaking();
+      this.rtc?.sendControl({ type: 'speaking', value: false });
       this.turnTaking.touchUserVoice();
       this.turnTaking.armIdleCheck();
     }

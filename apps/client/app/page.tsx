@@ -109,6 +109,12 @@ export default function Page() {
     noticeTimerRef.current = setTimeout(() => setNotice(null), 4000);
   };
 
+  // 后端推送的提示（如「额度不足」）走同一套 toast。
+  useEffect(() => {
+    if (call.notice) showNotice(call.notice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call.notice]);
+
   // 桌面版：缺 API key 时自动弹设置 + 右下角提示，并把打电话按钮禁用（未配 key 无法通话）。
   useEffect(() => {
     if (typeof window === 'undefined' || !window.mirrorSettings) return;
@@ -300,7 +306,7 @@ export default function Page() {
                     </div>
                   ))
                 )}
-                <div className="speaking"><i /><i /><i />对方正在说…</div>
+                {call.agentSpeaking && <div className="speaking"><i /><i /><i />对方正在说…</div>}
               </div>
               <div className="controls">
                 <button className={`ctl${call.muted ? ' muted' : ''}`} onClick={call.toggleMute}>{call.muted ? '🎙️ 开麦' : '🎙️ 关麦'}</button>
