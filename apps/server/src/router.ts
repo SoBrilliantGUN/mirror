@@ -10,6 +10,7 @@ export type RouterDeps = {
   contacts: { list(): Promise<string[]>; add(name: string): Promise<string[]>; remove(name: string): Promise<string[]> };
   memory: MemoryStore;
   transcript: { list(personaName: string, userId: string, opts: { since?: string; limit?: number }): Promise<unknown[]> };
+  dreamRuns: { recent(personaName: string, userId: string, limit?: number): Promise<unknown[]> };
   userId: string;
   defaultPersona: () => string; // 当前 persona.name（无 ?persona 时的回退）
   onRtcOffer: (body: OfferBody) => Promise<OfferResult>;
@@ -107,6 +108,20 @@ export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: Serv
         const id = u.pathname.slice('/memories/'.length);
         const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
         sendJson(res, 200, { removed: await deps.memory.remove(personaName, deps.userId, id) });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e) });
+      }
+      return;
+    }
+
+    // 做梦记录：最近 N 次巩固的运行计数（前端展示「做梦在干什么」）。
+    if (req.method === 'GET' && req.url?.startsWith('/dream')) {
+      try {
+        const u = new URL(req.url, 'http://localhost');
+        const personaName = u.searchParams.get('persona') ?? deps.defaultPersona();
+        const limitParam = u.searchParams.get('limit');
+        const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 20) : 20;
+        sendJson(res, 200, { runs: await deps.dreamRuns.recent(personaName, deps.userId, limit) });
       } catch (e) {
         sendJson(res, 500, { error: String(e) });
       }
