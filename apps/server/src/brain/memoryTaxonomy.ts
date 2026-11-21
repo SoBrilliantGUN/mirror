@@ -1,4 +1,4 @@
-// 五型长期记忆的「分类定义」唯一事实源。
+// 五型长期记忆的「分类 prompt」事实源（喂给 LLM 的分类定义；中文术语命名权威见根 GLOSSARY.md）。
 // 之前散落在 memoryClassifier（写前分类）、memoryTurn（抽取时自报）两处 prompt 里，措辞各写一份、
 // 改边界要改两个 prompt 还容易漏。这里收敛成一份 GLOSS，两处 prompt 引用同一份。
 // 注意：reflect.ts 的「弱相关可变事实 vs 强相关身份」是另一条轴（输出层面），措辞更细，保持独立；

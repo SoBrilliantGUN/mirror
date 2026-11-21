@@ -8,7 +8,7 @@ type Mem = { id: string; kind: string; content: string; createdAt: string };
 type Filter = 'all' | 'constraint' | 'fact' | 'preference' | 'episodic' | 'profile';
 
 const KIND_LABEL: Record<string, string> = {
-  fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
+  fact: '事实', preference: '偏好', episodic: '情节', profile: '特质', constraint: '约束',
 };
 const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];
 const chipClass = (k: string) => k;
@@ -18,7 +18,7 @@ const TABS: { key: Filter; label: string }[] = [
   { key: 'fact', label: '事实' },
   { key: 'preference', label: '偏好' },
   { key: 'episodic', label: '情节' },
-  { key: 'profile', label: '人设' },
+  { key: 'profile', label: '特质' },
 ];
 
 export default function MemoryLibrary({ persona, onClose }: { persona: string; onClose: () => void }) {

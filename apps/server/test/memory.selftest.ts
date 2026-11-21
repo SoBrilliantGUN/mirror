@@ -68,10 +68,10 @@ ok('含 [MEMORY] 标记，约束排最前', () => {
   assert.ok(block.indexOf('约束') < block.indexOf('事实'));
   assert.ok(block.includes('不要深夜逼问她'));
 });
-ok('人设在约束之后、事实之前', () => {
+ok('特质在约束之后、事实之前', () => {
   const block = formatMemoryBlock(recalled(['红线'], ['事实'], [], [], ['她的课题']), 1000);
-  assert.ok(block.indexOf('约束') < block.indexOf('人设'));
-  assert.ok(block.indexOf('人设') < block.indexOf('事实'));
+  assert.ok(block.indexOf('约束') < block.indexOf('特质'));
+  assert.ok(block.indexOf('特质') < block.indexOf('事实'));
   assert.ok(block.includes('她的课题'));
 });
 

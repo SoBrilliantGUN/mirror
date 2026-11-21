@@ -42,9 +42,10 @@ text + acoustic + vocalizations
 根 README 定义了 L0–L8 架构分层（L3=对话大脑、L4=安全红线、L5=状态/会话/记忆、L6=角色卡…）。代码注释里的 `L3/L4/L5` 一律指这套。
 曾经的「上下文窗口块」也用过一套 L0–L5（L0=system、L1=[STATE]、L2=[MEMORY]、L4=[REMINDER]、L5=历史），**两套 L 语义不同、现已合一**：窗口块统一改用 `[块名]` 指代（`[STATE]`/`[MEMORY]`/`[REMINDER]`/「历史」）。所以看到 `[X]` 是 prompt 里的块位置，看到 `L3/L4/L5` 是架构层。
 
-**2. `persona` 词根有三个义，别混。**
-- `Persona`（`contracts/persona.ts`）= 陪伴者角色（程书衡等）；`personaName` = 它的中文名，同时是「人物隔离」维度。
-- `profile`（记忆类型「人设」）= **关于用户**的稳定特质，与 `Persona` 无关。
-- `SelfAdded`（表名 `self_additions`）= **关于陪伴者自己**的软细节，独立于用户长期记忆。
+**2. 「人设」词根有四个义，别混（权威表见根 `GLOSSARY.md`）。**
+- `Persona`（`contracts/persona.ts`）= 陪伴者角色（程书衡等）；`personaName` = 它的中文名，同时是「人物隔离」维度。中文名就叫「人设」。
+- `profile`（记忆类型）= **关于用户**的稳定特质，中文名「**特质**」，与 `Persona` 无关。
+- `IdentityField`（`store/identity.ts`，结构化身份）= **关于用户**的基本信息（名字/性别/职业），字段单值覆盖，中文名「身份」。
+- `SelfAdded`（表名 `self_additions`）= **关于陪伴者自己**的软细节，独立于用户长期记忆，中文名「人设增补」。
 
-一句话：`profile` 记「用户是怎么样的人」，`SelfAdded` 记「陪伴者自己是怎么样的人」，两者都跟 `Persona`（角色）无直接关系。
+一句话：`profile`（特质）记「用户是怎么样的人」，`IdentityField`（身份）记「用户是谁」，`SelfAdded`（人设增补）记「陪伴者自己是怎么样的人」，三者都跟 `Persona`（角色）无直接关系。

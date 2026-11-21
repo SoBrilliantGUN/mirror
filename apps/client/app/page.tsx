@@ -12,7 +12,7 @@ const getServer = () => process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:
 type Mem = { id: string; kind: string; content: string; createdAt: string };
 
 const KIND_LABEL: Record<string, string> = {
-  fact: '事实', preference: '偏好', episodic: '情节', profile: '人设', constraint: '约束',
+  fact: '事实', preference: '偏好', episodic: '情节', profile: '特质', constraint: '约束',
 };
 // 笔记本展示的类型（含约束）
 const SHOW_KINDS = ['constraint', 'fact', 'preference', 'episodic', 'profile'];

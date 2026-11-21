@@ -16,7 +16,7 @@ export type Config = {
   embeddingBaseUrl: string;  // 如 https://dashscope.aliyuncs.com/compatible-mode/v1 或百炼网关 /v1
   embeddingModel: string;    // text-embedding-v3 等
   embeddingDim: number;      // 向量维度，与模型对齐（v3 默认 1024）
-  // 上下文窗口（参考 kima 六层窗口，压缩只打 L5 历史）
+  // 上下文窗口（参考 kima 六层窗口，压缩只打 [HISTORY] 历史）
   contextMaxTokens: number;   // 模型窗口（deepseek-chat = 64K）
   memoryRecallTopK: number;   // 混合召回 top-k
   // L2 语音（阿里云百炼）

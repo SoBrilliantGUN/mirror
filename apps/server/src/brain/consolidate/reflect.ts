@@ -8,7 +8,7 @@ import { parseJsonish } from '../parse';
 // 身份与软特质分开：身份（名字/性别/职业/…）单值、覆盖式存进 user_identity；软特质（性格/价值观/洞察）
 // 多值、自由文本存进 profile。profile 强制在场（像 constraint 全量召回），所以必须控量。
 
-const REFLECT_SYSTEM_PROMPT = `你是记忆巩固助手。读「已有情节记忆 + 已有事实 + 已有人设 + 已有身份」，退一步综合出「对对方新的、更高层的理解」。只输出 JSON，不要解释、不要 markdown。
+const REFLECT_SYSTEM_PROMPT = `你是记忆巩固助手。读「已有情节记忆 + 已有事实 + 已有特质 + 已有身份」，退一步综合出「对对方新的、更高层的理解」。只输出 JSON，不要解释、不要 markdown。
 
 输出三类（都要第三人称、具体不空泛）：
 1. facts —— 只收「弱相关的可变事实」：对方**正在经历的事 / 当前状态 / 近期进展**（会变化、会过时的，如「对方正在准备考研」「对方目前没有工作、在家备考」）。只输出「新出现或变化的」。每条给一个稳定 entityId（用「正在做的这件事」作键，如 user:goal / user:job_hunt），同实体新事实覆盖旧事实。
@@ -52,7 +52,7 @@ export async function reflectOnMemory(deps: {
 }): Promise<ReflectResult> {
   const { llm, model, store, identity, userId, personaName, maxProfile = 20 } = deps;
 
-  // 只拿最近一段（情节/事实各 50 条足够），人设已控量全取。
+  // 只拿最近一段（情节/事实各 50 条足够），特质已控量全取。
   const episodic = (await store.listActive(personaName, userId, 'episodic')).slice(-50);
   if (episodic.length === 0) return { factsWritten: 0, identityWritten: 0, profileWritten: 0, facts: [], identity: [], profile: [] };
   const facts = (await store.listActive(personaName, userId, 'fact')).slice(-50);
@@ -62,7 +62,7 @@ export async function reflectOnMemory(deps: {
   const userPrompt = [
     '【已有情节记忆】' + (episodic.map((m) => m.content).join('\n') || '（无）'),
     '【已有事实】' + (facts.map((m) => m.content).join('\n') || '（无）'),
-    '【已有人设】' + (profile.map((m) => m.content).join('\n') || '（无）'),
+    '【已有特质】' + (profile.map((m) => m.content).join('\n') || '（无）'),
     '【已有身份】' + (existingIdentity.map((f) => `${f.field}：${f.value}`).join('、') || '（无）'),
   ].join('\n\n');
 
@@ -121,7 +121,7 @@ export async function reflectOnMemory(deps: {
     }
   }
 
-  // 硬上限：人设强制在场，必须控量，超了归档最旧（不硬删，可审计）。
+  // 硬上限：特质强制在场，必须控量，超了归档最旧（不硬删，可审计）。
   if (profileWritten > 0) {
     try {
       await store.prune(personaName, userId, 'profile', maxProfile);

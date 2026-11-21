@@ -50,12 +50,12 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
   return { text: lines.join('\n'), used };
 }
 
-// [MEMORY] 块：五型按 约束→人设→偏好→事实→情节 优先级（约束先拿足预算、人设强制在场），
+// [MEMORY] 块：五型按 约束→特质→偏好→事实→情节 优先级（约束先拿足预算、特质强制在场），
 // 按 token 预算贪心填充；空则返回空串。
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
     { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },
-    { label: '人设（对方的身份基本信息 + 稳定特质 + 你对 TA 的理解，时刻记得）', items: recalled.profile },
+    { label: '特质（对方的稳定性格/价值观/长期模式 + 你对 TA 的理解，时刻记得）', items: recalled.profile },
     { label: '偏好（软规则/习惯，长期有效）', items: recalled.preference },
     { label: '事实（稳定状态）', items: recalled.fact },
     { label: '情节（具体事件）', items: recalled.episodic },
