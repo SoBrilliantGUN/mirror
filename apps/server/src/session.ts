@@ -27,6 +27,7 @@ import type {
   Affect,
   DependenceSignals,
   GrowthGoalStore,
+  IdentityStore,
   MemoryStore,
   MoodState,
   Persona,
@@ -67,6 +68,7 @@ import { recallContext, buildTurnMessages, createPrefetchCache } from './brain/a
 import { consolidateAfterTurn } from './brain/consolidate/afterTurn';
 import { classifyMemory } from './brain/memoryClassifier';
 import { GenerationGate } from './brain/generationGate';
+import { correctAsrText } from './brain/asrCorrect';
 import { compressHistory } from './brain/compress';
 import { summarizeCall, mergeCallSummaries } from './brain/recentSummary';
 import { buildProactiveSystemPrompt } from './brain/prompts';
@@ -131,6 +133,7 @@ export type SessionDeps = {
   conversationSummaries: ReturnType<typeof createConversationSummariesStore>;
   selfAdded: SelfAddedStore;
   goals: GrowthGoalStore;
+  identity: IdentityStore;
   sessions: ReturnType<typeof createSessionsStore>;
   transcript: ReturnType<typeof createTranscriptStore>;
   obs: Obs;
@@ -159,6 +162,7 @@ export class CallSession {
   private readonly conversationSummaries: SessionDeps['conversationSummaries'];
   private readonly selfAdded: SelfAddedStore;
   private readonly goals: GrowthGoalStore;
+  private readonly identity: IdentityStore;
   private readonly sessions: SessionDeps['sessions'];
   private readonly transcript: SessionDeps['transcript'];
   private readonly obs: Obs;
@@ -233,6 +237,7 @@ export class CallSession {
     this.conversationSummaries = deps.conversationSummaries;
     this.selfAdded = deps.selfAdded;
     this.goals = deps.goals;
+    this.identity = deps.identity;
     this.sessions = deps.sessions;
     this.transcript = deps.transcript;
     this.obs = deps.obs;
@@ -570,19 +575,23 @@ export class CallSession {
       timeAware: this.timeAware,
       selfAdded: this.selfAdded,
       goals: this.goals,
+      identity: this.identity,
       personaMatch: this.personaMatcher ?? undefined,
       prefetchCache: this.prefetchCache,
     };
     const dependenceSignals: DependenceSignals = this.currentSessionId
       ? await this.sessions.signals(this.persona.name, this.userId, this.currentSessionId).catch(() => ({ recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null }))
       : { recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null };
-    const [plan, ctx, recentAsked] = await Promise.all([
+    // 纠错与决策/召回并行（不额外吃首字延迟）；纠错结果只喂给装配与落库，打分/召回仍用原文——情绪与
+    // 向量召回对同音错字不敏感，但模型读到的正文、以及后台写进记忆的正文，必须是纠正后的。
+    const [plan, ctx, recentAsked, corrected] = await Promise.all([
       this.obs.span('decision', () => planTurn(
         { llm: this.llm, scoreModel: this.cfg.scoreModel, generateModel: this.cfg.generateModel, safetyGuard: this.safetyGuard, tracker: this.tracker, coachTracker: this.coachTracker, mood: this.mood },
         { text: userText, acoustic: acoustics, vocalizations: vocals, dominantVocal, persona: this.persona, dependenceSignals },
       )),
       this.obs.span('recall', () => recallContext(assembleDeps, { text: userText, history: this.history, loadedDetails: this.loadedDetails })),
       this.askedQuestions.recent(this.persona.name, this.userId, 3),
+      this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.generateModel, userText, formatHistory(this.history.slice(-6)))),
     ]);
     if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
@@ -621,7 +630,7 @@ export class CallSession {
     }
 
     const messages = buildTurnMessages(ctx, this.memoryBudget, {
-      text: userText,
+      text: corrected,
       mode: plan.mode,
       stance: plan.stance,
       frame: plan.frame,
@@ -667,13 +676,14 @@ export class CallSession {
       signal,
       tts: this.tts,
       pushAgentPcm: (pcm) => this.rtc?.pushAgentPcm(pcm),
+      pushTranscript: (text) => this.rtc?.sendControl({ type: 'transcript', role: 'agent', text }),
       sleep: (ms) => this.sleep(ms),
       tStart,
       obs: this.obs,
     });
     if (this.gate.isCurrent(myGen)) {
       reachedEnd = true;
-      this.recordTurnOutcome({ plan, ctx, userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
+      this.recordTurnOutcome({ plan, ctx, userText: corrected, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
     }
     } finally {
       this.cleanupInterrupted(myGen, reachedEnd);
@@ -830,7 +840,8 @@ export class CallSession {
     const agentText = fullText.trim();
     if (agentText) this.history.push({ kind: 'turn', role: 'agent', text: agentText });
     this.rtc?.end();
-    if (agentText) this.rtc?.sendControl({ type: 'transcript', role: 'agent', text: agentText });
+    // 用户这一轮已由 onAsrResult 先发了原始 ASR 文本，这里把纠正后的原文回传替换它。
+    this.rtc?.sendControl({ type: 'transcript', role: 'user', text: userText, replace: true });
     this.obs.setOutput(agentText);
     const asked = awaitsResponse !== null ? awaitsResponse : isAsking(agentText);
     this.recordTranscript('user', userText, {
@@ -886,6 +897,8 @@ export class CallSession {
       .then((res) => {
         this.prevTurnMemoryIds = res.writtenIds;
         for (const f of res.facts) this.userSaid.push(f);
+        // 记忆写好了，通知前端刷新笔记本（事件驱动，替代轮询）。
+        this.rtc?.sendControl({ type: 'memory' });
       })
       .catch((e) => console.warn('[memory] 后台写记忆失败：', e));
   }

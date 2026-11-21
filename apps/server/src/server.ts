@@ -15,6 +15,8 @@ import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
 import { createSelfAddedStore } from './store/selfAdded';
 import { createGoalsStore } from './store/goals';
+import { createIdentityStore } from './store/identity';
+import { createDreamRunsStore } from './store/dreamRuns';
 import { createPool, ensureSchema } from './store/db';
 import { createSessionsStore } from './store/sessions';
 import { createTranscriptStore } from './store/transcript';
@@ -53,6 +55,8 @@ export async function main() {
   const conversationSummaries = createConversationSummariesStore(pool); // 最近 3 天对话概要（跨通话「最近聊过什么」）
   const selfAdded = createSelfAddedStore(pool); // 人设增补：陪伴者底座之外的软细节
   const goals = createGoalsStore(pool); // 成长课题：Life Coach 的跨会话轨迹（重骨架）
+  const identity = createIdentityStore(pool); // 结构化身份：字段单值覆盖（做梦时反思抽取）
+  const dreamRuns = createDreamRunsStore(pool); // 做梦运行记录（前端展示用）
   const holidayMap = await loadHolidayMap(shanghaiParts(new Date()).year); // 节假日/工作日判定
   const timeAware = createTimeAware(memory, holidayMap); // 时间感知（L5）
   const summarizer = createSummarizer(llm, cfg.generateModel);
@@ -65,7 +69,7 @@ export async function main() {
   // 单会话编排：一通电话的所有实时状态与流程（ASR→L3→TTS + 主动发话 + 抢话）。
   const session = new CallSession({
     cfg, llm, safetyLlm, embedder, memory, askedQuestions, conversationSummaries,
-    selfAdded, goals, sessions, transcript, obs, timeAware, summarizer, memoryBudget, historyBudget, userId,
+    selfAdded, goals, identity, sessions, transcript, obs, timeAware, summarizer, memoryBudget, historyBudget, userId,
   });
   session.preloadGreetings(); // 启动即预热上线人物的招呼语（第一句秒回）
 
@@ -73,6 +77,7 @@ export async function main() {
     contacts,
     memory,
     transcript,
+    dreamRuns,
     userId,
     defaultPersona: () => session.personaName,
     onRtcOffer: (body) => session.handleOffer(body),
@@ -100,9 +105,10 @@ export async function main() {
             const fresh = await memory.listAll(p.name, userId, { since: prev });
             if (fresh.length === 0) continue;
           }
-          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, personaName: p.name });
+          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, identity, embedder, userId, personaName: p.name });
           lastDreamAt.set(p.name, new Date().toISOString());
-          console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedProfile}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
+          console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedIdentity}i/${r.abstractedProfile}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
+          await dreamRuns.log(p.name, userId, r).catch(() => {});
         } catch (e) {
           console.warn(`[dream] ${p.name} 做梦失败：`, e);
         }

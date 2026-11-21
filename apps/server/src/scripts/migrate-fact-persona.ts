@@ -7,6 +7,7 @@ import { createPool, ensureSchema } from '../store/db';
 import { DeepSeek } from '../llm/deepseek';
 import { createEmbedder } from '../llm/embedding';
 import { createMemoryStore } from '../store/memory';
+import { createIdentityStore } from '../store/identity';
 import { dreamOnMemory } from '../brain/consolidate/dream';
 import { PERSONAS } from '../persona';
 import type { Memory, MemoryKind } from '@mirror/contracts';
@@ -48,6 +49,7 @@ async function main() {
   const llm = new DeepSeek({ apiKey: cfg.deepseekApiKey, baseUrl: cfg.deepseekBaseUrl });
   const embedder = createEmbedder({ apiKey: cfg.embeddingApiKey, baseUrl: cfg.embeddingBaseUrl, model: cfg.embeddingModel });
   const memory = createMemoryStore(pool, embedder, { recallTopK: cfg.memoryRecallTopK });
+  const identity = createIdentityStore(pool);
   const userId = 'demo-user';
 
   const targets = process.argv[2]
@@ -95,7 +97,7 @@ async function main() {
     console.log(`[${personaName}] fact→persona 迁移 ${moved} 条（判定 ${toMoveIdx.size} 条）`);
 
     // 2) 做梦巩固：合并近重复 + 清矛盾 + 抽象升级（复用 dreamOnMemory，阈值已调 0.9）
-    const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, embedder, userId, personaName });
+    const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, identity, embedder, userId, personaName });
     console.log(`[${personaName}][dream] 抽象 fact=${r.abstractedFacts} profile=${r.abstractedProfile} | 合并=${r.merged} | 清矛盾=${r.resolved}`);
 
     await snapshot('AFTER');

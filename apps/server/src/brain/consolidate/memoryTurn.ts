@@ -19,9 +19,9 @@ const EXTRACT_SYSTEM_PROMPT = `你是记忆抽取助手。读「对方这一轮�
 1. 只抽「关于对方的稳定事实 / 反复表达的偏好 / 重要事件」，第三人称、一句话、具体不空泛。对方的事实只能来自【对方这一轮】。
 2. 【我这一轮】是陪伴者（你自己的人设）说的话，仅供理解语境，严禁从中抽取任何内容。陪伴者用第一人称说的（如「我拍照」「我遛狗」「我做时尚博主」）是他自己的事，绝不能写成「对方…」；陪伴者的猜测/追问（「是不是…」「可能…」「你是在…吧」）也不是对方说过的，不得写成对方的事实。
 3. 每句都记、琐碎寒暄不记。0~5 条，宁缺毋滥。
-4. kind 先自报（fact / preference / episodic / profile），系统会再核对一次。分类定义见：
+4. kind 先自报（constraint / fact / preference / episodic / profile），系统会再核对一次。分类定义见：
 ${MEMORY_KIND_GLOSS}
-   - 一条只记一件事。若对方一句话里同时含「身份/地域/称呼」+「偏好」+「当前状态」，拆成多条分别归类：身份/地域/称呼（强相关，关于"对方是谁"）→ profile；口味/习惯等偏好 → preference；当前状态/正在做的事（弱相关）→ fact。严禁把身份信息（职业/学校/地域/重要关系/称呼）塞进 fact。
+   - 一条只记一件事。若对方一句话里同时含「身份/称呼」+「偏好」+「当前状态」，拆成多条分别归类：身份/地域/称呼（关于"对方是谁"，如"对方说自己是深圳大学学生"）→ episodic（当作对方说过的一条身份信息原话，做梦时会抽成结构化身份字段）；口味/习惯等偏好 → preference；当前状态/正在做的事（弱相关）→ fact。身份信息既不归 profile，也不归 fact。
 5. dimension 归入哪个维度（${DIMENSION_LIST}），实在归不进去就留空字符串。
 6. aspect 归入该维度的哪个子项（${ASPECT_LIST}），没有对应子项就留空字符串。
 7. 若这条记忆含「值得长期记住的时间」（生日/纪念日/忌日/规律作息），额外给 anchor，并把 content 写成绝对/周期措辞（如「对方生日是 11 月 13 日」）：
@@ -32,7 +32,7 @@ ${MEMORY_KIND_GLOSS}
 8. 若对方这一轮在纠正之前说过的某个事实（例如「不是签证，是全栈」「我刚才说错了」「其实不是…」），说明之前可能听错/记错了：除了抽取纠正后的正确事实，还要把被纠正掉的错误点放进 retract（放最简短的关键词，通常一个词，如「签证」；别放整句）。没有纠正就省略 retract。
 
 只输出这个 JSON（retract 可省略）：
-{"memories":[{"content":"<一句话>","kind":"fact|preference|episodic|profile","dimension":"<维度或空>","aspect":"<子项或空>","anchor":<绝对或周期锚点或省略>}],"retract":["<被纠正掉的错误关键词>"]}`;
+{"memories":[{"content":"<一句话>","kind":"constraint|fact|preference|episodic|profile","dimension":"<维度或空>","aspect":"<子项或空>","anchor":<绝对或周期锚点或省略>}],"retract":["<被纠正掉的错误关键词>"]}`;
 
 export type ExtractOutput = { content: string; kind: MemoryKind; dimension: string; aspect: string; anchor?: TimeAnchor }[];
 

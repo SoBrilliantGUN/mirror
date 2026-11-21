@@ -4,6 +4,8 @@ import type {
   Frame,
   GrowthGoal,
   GrowthGoalStore,
+  IdentityField,
+  IdentityStore,
   Memory,
   MemoryStore,
   RecalledMemories,
@@ -16,7 +18,7 @@ import type {
 } from '@mirror/contracts';
 import type { ChatMessage } from '../llm/deepseek';
 import { formatPersonaBlock, type PersonaDetail } from '../persona/loadPersona';
-import { buildGoalFollowUpHint, buildLayeredUserPrompt, formatGoalBlock, formatSelfAddedBlock, formatTimeBlock, type HistoryEntry, type TurnPromptSignals } from './context';
+import { buildGoalFollowUpHint, buildLayeredUserPrompt, formatGoalBlock, formatIdentityBlock, formatSelfAddedBlock, formatTimeBlock, type HistoryEntry, type TurnPromptSignals } from './context';
 import { buildGenerateSystemPrompt } from './prompts';
 import { buildCuriosityHint } from './ontology';
 import { formatCrisisResources } from './crisisResources';
@@ -63,6 +65,8 @@ export type AssembleDeps = {
   selfAdded: SelfAddedStore;
   // 成长课题存储：每轮召回进行中课题，装配成 [GOAL] 块（Life Coach 的跨会话轨迹）。
   goals: GrowthGoalStore;
+  // 结构化身份存储：每轮召回字段（单值、覆盖式），装配成 [IDENTITY] 块。
+  identity: IdentityStore;
   // 人物记忆渐进式加载：语义匹配器（无则跳过）+ 会话级已加载详情缓存。
   personaMatch?: (text: string) => Promise<PersonaDetail[]>;
   // look-ahead 预取缓存：后台预热命中的记忆并入本轮召回（纯增量、去重，可选）。
@@ -93,6 +97,7 @@ export type RecalledContext = {
   personaBlock: string;
   selfAdded: SelfAdded[]; // 人设增补（陪伴者说过的软细节，强制在场）
   goals: GrowthGoal[];    // 进行中的成长课题（[GOAL] 块注入）
+  identity: IdentityField[]; // 结构化身份（[IDENTITY] 块注入，单值字段）
   coverage: CoverageEntry[]; // dimension + aspect → 已知事实数（好奇心缺口检测用）
   time: { timeContext?: TimeContext; upcoming: UpcomingDate[]; careHint: string };
 };
@@ -110,6 +115,7 @@ export function emptyRecall(): RecalledContext {
     personaBlock: '',
     selfAdded: [],
     goals: [],
+    identity: [],
     coverage: [],
     time: { timeContext: undefined, upcoming: [], careHint: '' },
   };
@@ -145,14 +151,14 @@ export function mergeRecalled(base: RecalledMemories, extra: Memory[]): Recalled
 
 // 记忆召回 + 历史压缩：与打分（planTurn）无关，可并行跑，省掉一次串行等待。
 export async function recallContext(deps: AssembleDeps, input: RecallInput): Promise<RecalledContext> {
-  const { store, userId, personaName, compress, personaMatch, prefetchCache, timeAware, goals } = deps;
+  const { store, userId, personaName, compress, personaMatch, prefetchCache, timeAware, goals, identity } = deps;
   const text = input.text || '当前对话';
   const now = new Date();
 
-  // 七个互不依赖的步骤并行跑：eager 召回、人物详情匹配、历史压缩、覆盖率、临近日期、人设增补、成长课题。
+  // 八个互不依赖的步骤并行跑：eager 召回、人物详情匹配、历史压缩、覆盖率、临近日期、人设增补、成长课题、身份。
   // 之前串行 await，embedding 召回 + 历史压缩都慢时会出现延迟尖峰（日志里见过召回 2977ms）。
   // 每个网络/DB 步骤都各自 try/catch 降级为空，不因单点失败阻断对话。
-  const [recalled, freshDetails, compressedHistory, coverage, upcoming, selfAdded, activeGoals] = await Promise.all([
+  const [recalled, freshDetails, compressedHistory, coverage, upcoming, selfAdded, activeGoals, identityFields] = await Promise.all([
     (async (): Promise<RecalledMemories> => {
       try { return await store.recall(personaName, userId, text); }
       catch (e) { console.warn('[memory] 召回失败，降级为空记忆：', e); return EMPTY_RECALL; }
@@ -179,6 +185,10 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
       try { return await goals.listActive(personaName, userId); }
       catch (e) { console.warn('[goal] 课题召回失败，降级为空：', e); return []; }
     })(),
+    (async (): Promise<IdentityField[]> => {
+      try { return await identity.list(personaName, userId); }
+      catch (e) { console.warn('[identity] 身份召回失败，降级为空：', e); return []; }
+    })(),
   ]);
 
   // look-ahead 预取：后台上一轮预热命中的记忆并入本轮（纯函数，无 IO）。
@@ -195,7 +205,7 @@ export async function recallContext(deps: AssembleDeps, input: RecallInput): Pro
   const timeContext = timeAware.currentTimeContext(now);
   const careHint = timeAware.scheduleCareHint(now, recalledMerged);
 
-  return { recalled: recalledMerged, loadedDetails, compressedHistory, personaBlock, selfAdded, goals: activeGoals, coverage, time: { timeContext, upcoming, careHint } };
+  return { recalled: recalledMerged, loadedDetails, compressedHistory, personaBlock, selfAdded, goals: activeGoals, identity: identityFields, coverage, time: { timeContext, upcoming, careHint } };
 }
 
 // 从召回结果 + 决策结果装配最终 messages。
@@ -236,6 +246,7 @@ export function buildTurnMessages(ctx: RecalledContext, memoryBudget: number, in
     history: summaries,
     personaBlock: ctx.personaBlock,
     selfAddedBlock: formatSelfAddedBlock(ctx.selfAdded),
+    identityBlock: formatIdentityBlock(ctx.identity),
   });
   messages.push({ role: 'user', content: baseUser });
   return messages;

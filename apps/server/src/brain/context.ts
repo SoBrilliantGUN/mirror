@@ -2,6 +2,7 @@ import type {
   Affect,
   EmotionTag,
   GrowthGoal,
+  IdentityField,
   Memory,
   Mode,
   MoodState,
@@ -119,6 +120,18 @@ export function formatSelfAddedBlock(items: SelfAdded[]): string {
   );
 }
 
+// [IDENTITY] 结构化身份块：对方的基本信息（字段→值，单值、覆盖式）。空则返回空串。
+export function formatIdentityBlock(fields: IdentityField[]): string {
+  if (fields.length === 0) return '';
+  return '[IDENTITY] 对方的基本信息（记在心里，别念档案）：\n' + fields.map((f) => `- ${f.field}：${f.value}`).join('\n');
+}
+
+// [约束] 尾部重放：把硬规则/红线再强调一遍（头部 [MEMORY] 已有一遍，这里防 lost-in-the-middle）。空则返回空串。
+export function formatConstraintReminder(constraints: Memory[]): string {
+  if (constraints.length === 0) return '';
+  return '[约束] 再强调一遍，这些硬规则/红线务必遵守，别因为聊得投入就忘掉：\n' + constraints.map((c) => `- ${c.content}`).join('\n');
+}
+
 const STAGE_LABEL: Record<string, string> = {
   goal: '定目标',
   reality: '看现状',
@@ -182,6 +195,7 @@ export function formatHistory(history: HistoryEntry[]): string {
 //   [MEMORY]           ← memories + memoryBudget
 //   [PERSONA]          ← personaBlock
 //   [SELF_ADDED]       ← selfAddedBlock
+//   [IDENTITY]         ← identityBlock
 //   [STATE]            ← mode/stance/emotion/mood/turnCount/affect/userGender
 //   [GOAL]             ← goalBlock
 //   [FOLLOW_UP]        ← goalFollowUp
@@ -229,6 +243,7 @@ export type LayeredPromptInput = TurnPromptSignals & {
   history: HistoryEntry[]; // 已经过压缩的 L5（多轮改造后只剩摘要；逐字 turn 走原生消息）
   personaBlock?: string; // [PERSONA] 人物命中详情块（渐进式加载，空则省略）
   selfAddedBlock?: string; // [SELF_ADDED] 人设增补块（永久固化 + 强制一致，空则省略）
+  identityBlock?: string; // [IDENTITY] 结构化身份块（字段→值，单值覆盖；空则省略）
 };
 
 export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
@@ -240,6 +255,8 @@ export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
   if (input.personaBlock) parts.push(input.personaBlock);
 
   if (input.selfAddedBlock) parts.push(input.selfAddedBlock);
+
+  if (input.identityBlock) parts.push(input.identityBlock);
 
   parts.push(formatStateBlock(input));
 
@@ -279,6 +296,9 @@ export function buildLayeredUserPrompt(input: LayeredPromptInput): string {
   }
 
   parts.push(SAFETY_REMINDER); // L4 尾部重放（首尾三明治的「尾」）
+  // 约束（硬规则/红线）也在尾部重放一遍——头部 [MEMORY] 已有一遍，这里再强调，防 lost-in-the-middle。
+  const constraintReminder = formatConstraintReminder(input.memories.constraint);
+  if (constraintReminder) parts.push(constraintReminder);
 
   if (input.farewell) {
     parts.push(

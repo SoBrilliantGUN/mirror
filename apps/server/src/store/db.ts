@@ -25,6 +25,12 @@ export async function ensureSchema(pool: Pool): Promise<void> {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS vector`);
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
 
+  // 迁移：老库列名 character_id → persona_name（幂等，见 renameColumn）。必须跑在所有建表/建索引之前——
+  // 否则老库里还叫 character_id，后边的 CREATE INDEX ... (persona_name) 会报「列不存在」。
+  for (const t of ['call_sessions', 'memories', 'persona_additions', 'growth_goals', 'asked_questions', 'conversation_summaries', 'call_turns']) {
+    await renameColumn(pool, t, 'character_id', 'persona_name');
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
       name text PRIMARY KEY,
@@ -64,12 +70,6 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
-
-  // 迁移：老库列名 character_id → persona_name（幂等，见 renameColumn）。必须跑在下方 memories 的
-  // 「补 persona_name」之前——否则老库会被先补出一个空的 persona_name，rename 就跳过了。
-  for (const t of ['call_sessions', 'memories', 'persona_additions', 'growth_goals', 'asked_questions', 'conversation_summaries', 'call_turns']) {
-    await renameColumn(pool, t, 'character_id', 'persona_name');
-  }
 
   // 迁移：老库的 memories 只有 user_id（所有人物共享一份画像）。补 persona_name 并把存量回填到默认人物程书衡。
   await pool.query(`ALTER TABLE memories ADD COLUMN IF NOT EXISTS persona_name text NOT NULL DEFAULT '程书衡'`);
@@ -187,4 +187,34 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS call_turns_char_user_time_idx ON call_turns (persona_name, user_id, created_at DESC)`);
+
+  // 结构化身份（做梦时反思抽取）：field→value 单值覆盖，不做自由文本记忆。字段名动态（中文名/昵称/宠物…）。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_identity (
+      persona_name text NOT NULL,
+      user_id text NOT NULL,
+      field text NOT NULL,
+      value text NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (persona_name, user_id, field)
+    )
+  `);
+
+  // 做梦运行记录（前端展示「做梦具体做了什么」用）：计数 + details jsonb（实际写下的内容）。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dream_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      persona_name text NOT NULL,
+      user_id text NOT NULL,
+      facts int NOT NULL DEFAULT 0,
+      identity int NOT NULL DEFAULT 0,
+      profile int NOT NULL DEFAULT 0,
+      merged int NOT NULL DEFAULT 0,
+      resolved int NOT NULL DEFAULT 0,
+      details jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`ALTER TABLE dream_runs ADD COLUMN IF NOT EXISTS details jsonb`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS dream_runs_char_user_time_idx ON dream_runs (persona_name, user_id, created_at DESC)`);
 }

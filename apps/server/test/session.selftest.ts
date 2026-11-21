@@ -68,6 +68,7 @@ function makeSession() {
     conversationSummaries: { save: async () => {}, recent: async () => [] } as any,
     selfAdded: { listActive: async () => [], write: async () => ({}), touch: async () => {}, archiveStale: async () => 0 } as any,
     goals: { listActive: async () => [], create: async () => ({}), update: async () => null, complete: async () => {}, archive: async () => {}, touch: async () => {} } as any,
+    identity: { list: async () => [], upsert: async () => {} } as any,
     sessions: { start: async () => 'sid', end: async () => {}, signals: async () => ({ recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null }) } as any,
     transcript: { insert: async () => {}, list: async () => [] } as any,
     obs: mockObs,

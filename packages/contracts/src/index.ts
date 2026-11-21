@@ -13,3 +13,4 @@ export * from './memory';
 export * from './time';
 export * from './persona';
 export * from './selfAdded';
+export * from './identity';
