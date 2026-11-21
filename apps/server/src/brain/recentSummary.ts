@@ -1,4 +1,4 @@
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { estimateTokens, type HistoryEntry } from './context';
 import { historyToText } from './compress';
 
@@ -15,7 +15,7 @@ const COMPRESS_SYSTEM = `你是对话概要压缩助手。把下面这份「最�
 // 最近 3 天概要合并后的预算（token）：超出就压缩成一段短回顾。可调。
 const RECENT_BUDGET_TOKENS = 400;
 
-export async function summarizeCall(llm: DeepSeek, model: string, history: HistoryEntry[]): Promise<string> {
+export async function summarizeCall(llm: LlmClient, model: string, history: HistoryEntry[]): Promise<string> {
   const text = historyToText(history);
   if (!text.trim()) return '';
   try {
@@ -34,7 +34,7 @@ export async function summarizeCall(llm: DeepSeek, model: string, history: Histo
 }
 
 // 合并多份概要：不超预算则原样按时间顺序拼接，超预算则 LLM 压成一段短回顾。
-export async function mergeCallSummaries(llm: DeepSeek, model: string, summaries: string[]): Promise<string> {
+export async function mergeCallSummaries(llm: LlmClient, model: string, summaries: string[]): Promise<string> {
   const joined = summaries.join('\n');
   if (!joined.trim()) return '';
   if (estimateTokens(joined) <= RECENT_BUDGET_TOKENS) return joined;

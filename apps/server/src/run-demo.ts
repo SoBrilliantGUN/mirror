@@ -1,7 +1,7 @@
 // 冒烟：跑一轮真实 turn（需要 DEEPSEEK_API_KEY）。
 // 用法：DEEPSEEK_API_KEY=sk-xxx npx tsx apps/server/src/run-demo.ts
 import { loadConfig, loadDotEnv } from './config';
-import { DeepSeek } from './llm/deepseek';
+import { LlmClient } from './llm/client';
 import { PERSONAS } from './persona/generated';
 import { NoopSafetyGuard, neutralAcoustic } from './fallbacks';
 import { ModeTracker } from './brain/modeTracker';
@@ -17,7 +17,7 @@ async function main() {
     process.exit(1);
   }
 
-  const llm = new DeepSeek({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl });
+  const llm = new LlmClient({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl });
 
   // 会话级状态（L5）：每会话一个 tracker + mood；教练交互框架 tracker 同理。
   const tracker = new ModeTracker();

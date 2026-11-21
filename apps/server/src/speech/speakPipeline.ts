@@ -1,5 +1,5 @@
 import type { EmotionTag } from '@mirror/contracts';
-import type { ChatMessage, DeepSeek, ToolCall } from '../llm/deepseek';
+import type { ChatMessage, LlmClient, ToolCall } from '../llm/client';
 import type { GenerationGate } from '../brain/generationGate';
 import type { TtsEngine } from './ttsEngine';
 import type { Obs } from '../obs/langfuse';
@@ -28,7 +28,7 @@ function asyncIterator<T>(segments: AsyncIterable<T> | T[]): AsyncIterator<T> {
 }
 
 export type StreamTurnSpeechDeps = {
-  llm: DeepSeek;
+  llm: LlmClient;
   generateModel: string;
   messages: ChatMessage[];
   baseEmotion: EmotionTag; // plan.emotion，本轮回应基调

@@ -1,7 +1,7 @@
 // 纯逻辑冒烟测试：L4 安全红线——parseSafetyJson / keywordScan / resolveDependence / episode 去抖。
 // 运行：npm test（或 tsx apps/server/test/safety.selftest.ts）
 import { strict as assert } from 'node:assert';
-import type { DeepSeek } from '../src/llm/deepseek';
+import type { LlmClient } from '../src/llm/client';
 import { SafetyGuard, parseSafetyJson, keywordScan, resolveDependence } from '../src/brain/safety';
 
 let passed = 0;
@@ -70,7 +70,7 @@ ok('无信号（undefined）→ none', () => {
 });
 
 console.log('SafetyGuard episode 去抖（假 LLM 抛错，走关键词兜底）');
-const fakeLlm = { chat: async () => { throw new Error('fail'); } } as unknown as DeepSeek;
+const fakeLlm = { chat: async () => { throw new Error('fail'); } } as unknown as LlmClient;
 ok('首次命中 → refer；episode 内同档 → none；连续 2 轮 0 → 新 episode 再 refer', async () => {
   const g = new SafetyGuard({ llm: fakeLlm, model: 'x' });
   const a1 = await g.check('我要自杀');

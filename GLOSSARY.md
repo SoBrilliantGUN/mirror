@@ -14,7 +14,7 @@
 
 | 上下文 | 落点 | 领域词 |
 |---|---|---|
-| 陪伴 / 对话 | `brain/turn` + `session` + `turnTaking` | 轮次、Mode、Stance、EmotionTag |
+| 陪伴 / 对话 | `brain/turn` + `session` + `conversationFlow` | 轮次、Mode、Stance、EmotionTag |
 | 成长 / 教练 | `brain/coach` + `store/goals` | Frame、GROW、课题 |
 | 记忆 | `store/memory` + `brain/consolidate` | 五型 constraint/fact/preference/episodic/profile |
 | 身份 | `store/identity` | IdentityField（结构化身份，单值覆盖） |

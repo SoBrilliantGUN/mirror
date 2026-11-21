@@ -18,14 +18,19 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function makeCfg() {
   return {
-    databaseUrl: '', deepseekApiKey: '', deepseekBaseUrl: '', scoreModel: 'deepseek-chat', generateModel: 'deepseek-chat',
-    safetyModel: 'qwen-turbo', safetyBaseUrl: '', embeddingApiKey: '', embeddingBaseUrl: '', embeddingModel: 'text-embedding-v3', embeddingDim: 1024,
-    contextMaxTokens: 64000, memoryRecallTopK: 5,
-    dashscopeApiKey: '', dashscopeBaseUrl: '', dashscopeWsUrl: 'ws://localhost:1', dashscopeWsFallbackUrl: '', dashscopeOfficialApiKey: '',
-    cosyvoiceModel: '', cosyvoiceVoice: '', paraformerModel: '',
-    nlsEnabled: false, nlsAppKey: '', nlsToken: '', nlsAkId: '', nlsAkSecret: '',
-    bochaApiKey: '', bochaBaseUrl: '', langfusePublicKey: '', langfuseSecretKey: '', langfuseBaseUrl: '',
-    iceHostAddress: '', icePortRange: [50000, 50100],
+    databaseUrl: '', userName: '', contextMaxTokens: 64000, memoryRecallTopK: 5,
+    llm: {
+      deepseekApiKey: '', deepseekBaseUrl: '', scoreModel: 'deepseek-chat', generateModel: 'deepseek-chat',
+      safetyModel: 'qwen-turbo', safetyBaseUrl: '', embeddingApiKey: '', embeddingBaseUrl: '', embeddingModel: 'text-embedding-v3', embeddingDim: 1024,
+    },
+    speech: {
+      dashscopeApiKey: '', dashscopeBaseUrl: '', dashscopeWsUrl: 'ws://localhost:1', dashscopeWsFallbackUrl: '', dashscopeOfficialApiKey: '',
+      cosyvoiceModel: '', cosyvoiceVoice: '', paraformerModel: '',
+    },
+    nls: { enabled: false, appKey: '', token: '', akId: '', akSecret: '' },
+    search: { bochaApiKey: '', bochaBaseUrl: '' },
+    obs: { langfusePublicKey: '', langfuseSecretKey: '', langfuseBaseUrl: '' },
+    ice: { hostAddress: '', portRange: [50000, 50100] },
   } as any;
 }
 

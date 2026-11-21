@@ -1,4 +1,4 @@
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 
 // ASR 上下文纠错：语音识别把一句话听成同音/近音字（"刚跟八股文较劲完" → "干根巴股文较劲丸"）。
 // 用最近对话上下文把明显听错的字词改回通顺原话，再进装配/落库。只改错字、不添意思。
@@ -13,7 +13,7 @@ const ASR_CORRECT_SYSTEM = `你是语音转写纠错器。对方刚说的一句�
 4. 只输出纠正后的那一句，不要解释、不要引号、不要任何前缀后缀。`;
 
 export async function correctAsrText(
-  llm: DeepSeek,
+  llm: LlmClient,
   model: string,
   text: string,
   context: string,

@@ -1,8 +1,14 @@
 // ConversationFlowController —— 一通电话的「谁来说、何时说、怎么停」状态机，从 session.ts 抽出。
 // 只管决策与计时，不碰 llm/tts/transcript 这些 I/O 资源（那些仍留在 CallSession，经 host 回调触发）。
 //
-// 跨模块共享的状态字段（CallSession 的 respond/onAsrResult 也读写）用 public 暴露；
-// 纯本模块内部状态（计时器 / 计数 / 标记）保持 private。
+// 显式状态机（这次重构的核心）：
+//   FloorPhase（地板相位）= 谁拥有话语权、agent 是否正在「想/说」，取代原来散在 CallSession 的
+//   speaking/agentAudible 两个布尔 + 这里的 pendingInterrupt/lastWasFarewell。它是纯函数 reducePhase，
+//   可单测；ConversationFlowController 只当「时钟 + 副作用执行器」（driver）。
+//
+// 什么「不是」状态（关键纪律：state = 离散控制流位置；计数/时间戳 = context）：
+//   noReplyStreak（静默升级到第几级）、lastVocalRespondAt（哭/笑冷却）、reanswerCount（重答次数）、
+//   coachCheckinDone（教练确认过了吗）——这些是计数器/时间戳，放 ctx，不建模成状态，否则状态爆炸。
 import type { Affect, MoodState, VocalizationEvent } from '@mirror/contracts';
 import type { GenerationGate } from './brain/generationGate';
 import type { RtcPeer } from './rtc/webrtc';
@@ -51,10 +57,44 @@ export type ConversationFlowHost = {
   coachIsActive(): boolean;
   mood: MoodState | null;
   lastAffect: Affect | null;
-  get speaking(): boolean;      // 读：判断是否还在说
-  get agentAudible(): boolean;  // 读：判断是否听得见
-  stopSpeaking(): void;         // 写：打断时收敛「停说 + 停听」，归属 CallSession（不直接 set 宿主字段）
 };
+
+// —— 地板相位（显式状态） ——
+// idle          agent 沉默，等用户开口（armed 静默升级阶梯）
+// thinking      一句已开始（respond/proactive/greeting），planTurn/recall 在跑，还没出声
+// speaking      agent 正在放音频（audible）
+// interruptGrace 收到 RTC 打断，去抖窗口内（仍在放，等确认是否真打断）
+export type FloorPhase = 'idle' | 'thinking' | 'speaking' | 'interruptGrace';
+
+export type PhaseEvent =
+  | { type: 'beginTurn' }               // respond/speakProactive/招呼语 开始一句
+  | { type: 'markAudible' }             // TTS 开始出声（或招呼语缓存开始播放）
+  | { type: 'interrupt'; source: 'rtc' | 'asr' } // 打断（只在 audible 时触发）
+  | { type: 'graceElapsed' }            // 打断宽限计时到
+  | { type: 'playbackEnd' }             // agent 说完（播放结束）
+  | { type: 'stopSpeaking' };           // 强制收声（doBargeIn / 挂断）
+
+export type PhaseEffect = { kind: 'armGraceTimer' } | { kind: 'doBargeIn' };
+
+// 地板相位的纯 reducer：只算「下一步相位 + 该做什么」，不碰任何 I/O / 计时器本身（driver 执行 effect）。
+// 派生读：speaking = thinking/speaking/interruptGrace；audible = speaking/interruptGrace。
+export function reducePhase(phase: FloorPhase, ev: PhaseEvent): { phase: FloorPhase; effects: PhaseEffect[] } {
+  switch (ev.type) {
+    case 'beginTurn':
+      return { phase: 'thinking', effects: [] };
+    case 'markAudible':
+      return { phase: 'speaking', effects: [] };
+    case 'interrupt':
+      // rtc 打断先进宽限去抖（可能是碰麦/清嗓）；asr 打断（用户真说了话）直接执行。
+      if (ev.source === 'rtc') return { phase: 'interruptGrace', effects: [{ kind: 'armGraceTimer' }] };
+      return { phase: 'idle', effects: [{ kind: 'doBargeIn' }] };
+    case 'graceElapsed':
+      return phase === 'interruptGrace' ? { phase: 'idle', effects: [{ kind: 'doBargeIn' }] } : { phase, effects: [] };
+    case 'playbackEnd':
+    case 'stopSpeaking':
+      return { phase: 'idle', effects: [] };
+  }
+}
 
 // 非问句结尾后的「轻问找话题」等待时长：根据对方当前情绪动态决定，不写死一个数。
 export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): number {
@@ -69,10 +109,10 @@ export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): num
 }
 
 export class ConversationFlowController {
-  // —— 会话级共享状态（CallSession 经下方窄方法读/写，不直接碰字段）——
-  // 之前这些字段是 public、由 CallSession 直接写，靠一张「谁在哪个点写」的手工表维持一致；
-  // 现收敛为窄方法（recordVocal / captureTurn / markAsked / markFarewell / …），
-  // 所有权从注释变成方法签名——新增状态要么加方法、要么不暴露，编译器兜底。
+  // —— 显式状态：地板相位（谁在说 / 是否出声）——
+  private phase: FloorPhase = 'idle';
+
+  // —— 会话级共享 context（计数 / 时间戳 / 上一次用户话，不是状态）——
   private lastUserVoiceAt = Date.now();
   private lastReplyLatencyMs = 0;
   private agentDoneAt = 0;
@@ -81,24 +121,43 @@ export class ConversationFlowController {
   private lastTurnAskedQuestion = false;
   private lastWasFarewell = false;
   private idleFired = false;
+  private noReplyStreak = 0;
+  private coachCheckinDone = false;
   private pendingVocals = new VocalEventAggregator();
 
-  // —— 纯本模块内部状态 ——
+  // —— 纯本模块内部状态（计时器） ——
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private hangupTimer: ReturnType<typeof setTimeout> | null = null;
   private vocalTimer: ReturnType<typeof setTimeout> | null = null;
   private reanswerTimer: ReturnType<typeof setTimeout> | null = null;
   private interruptGraceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingInterrupt = false;
   private lastBargeInAt = 0;
   private lastVocalRespondAt = 0;
-  private noReplyStreak = 0;
-  private coachCheckinDone = false;
 
   constructor(private readonly host: ConversationFlowHost, private readonly timing: ConversationFlowTiming) {}
 
+  // —— 地板相位对外读（取代 CallSession 的 speaking / agentAudible 两个布尔） ——
+  get speaking(): boolean {
+    return this.phase === 'thinking' || this.phase === 'speaking' || this.phase === 'interruptGrace';
+  }
+  get agentAudible(): boolean {
+    return this.phase === 'speaking' || this.phase === 'interruptGrace';
+  }
+
+  // —— 地板相位迁移（driver 派发事件给纯 reducer） ——
+  beginTurn(): void {
+    this.phase = reducePhase(this.phase, { type: 'beginTurn' }).phase;
+  }
+  markAudible(): void {
+    this.phase = reducePhase(this.phase, { type: 'markAudible' }).phase;
+  }
+  stopSpeaking(): void {
+    this.phase = reducePhase(this.phase, { type: 'stopSpeaking' }).phase;
+  }
+
   // 新通话开始时重置（对应 handleOffer 里的那批重置）。
   reset(): void {
+    this.phase = 'idle';
     this.coachCheckinDone = false;
     this.lastUserVoiceAt = Date.now();
     this.idleFired = false;
@@ -113,7 +172,7 @@ export class ConversationFlowController {
     this.pendingVocals = new VocalEventAggregator();
   }
 
-  // —— 供 CallSession 借用的窄方法（替代直接写 private 字段；所有权 = 方法签名）——
+  // —— 供 CallSession 借用的窄方法 ——
 
   // NLS 声音事件到达：进聚合器，去抖后由 scheduleVocalRespond 触发 respond。
   recordVocal(ev: VocalizationEvent): void {
@@ -197,8 +256,9 @@ export class ConversationFlowController {
     }
   }
 
-  // 陪伴者干净说完（onPlaybackEnd）：重置静默计时基准 + 记下结束时刻（供下一轮算回复延迟）。
+  // 陪伴者干净说完（onPlaybackEnd）：相位回 idle + 重置静默计时基准 + 记下结束时刻（供下一轮算回复延迟）。
   markAgentDone(): void {
+    this.phase = reducePhase(this.phase, { type: 'playbackEnd' }).phase;
     this.lastUserVoiceAt = Date.now();
     this.agentDoneAt = Date.now();
   }
@@ -221,7 +281,7 @@ export class ConversationFlowController {
     if (!turn || this.reanswerCount >= this.timing.reanswerLimit) return;
     this.reanswerTimer = setTimeout(() => {
       this.reanswerTimer = null;
-      if (this.lastUserTurn === turn && !this.host.speaking && this.host.rtc) {
+      if (this.lastUserTurn === turn && !this.speaking && this.host.rtc) {
         this.reanswerCount++;
         console.log('[respond] 误打断后重答（第', this.reanswerCount, '次）：', turn.text);
         void this.host.obs.trace('reanswer', { metadata: { attempt: this.reanswerCount, personaName: this.host.personaName } }, async () => {});
@@ -236,13 +296,13 @@ export class ConversationFlowController {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    if (!this.host.rtc || this.host.speaking) return;
+    if (!this.host.rtc || this.speaking) return;
     if (this.host.coachIsActive()) {
       const target = this.coachCheckinDone ? this.timing.coachCloseMs : this.timing.coachSilentMs;
       const wait = Math.max(0, target - (Date.now() - this.lastUserVoiceAt));
       this.idleTimer = setTimeout(() => {
         this.idleTimer = null;
-        if (!this.host.rtc || this.host.speaking) return;
+        if (!this.host.rtc || this.speaking) return;
         if (Date.now() - this.lastUserVoiceAt >= target) {
           if (!this.coachCheckinDone) {
             this.coachCheckinDone = true;
@@ -274,7 +334,7 @@ export class ConversationFlowController {
     const wait = Math.max(0, target - (Date.now() - this.lastUserVoiceAt));
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (!this.host.rtc || this.host.speaking) return;
+      if (!this.host.rtc || this.speaking) return;
       if (Date.now() - this.lastUserVoiceAt < target) {
         this.armIdleCheck();
         return;
@@ -298,7 +358,7 @@ export class ConversationFlowController {
   }
 
   clearPendingInterrupt(): void {
-    this.pendingInterrupt = false;
+    if (this.phase === 'interruptGrace') this.phase = 'speaking';
     if (this.interruptGraceTimer !== null) {
       clearTimeout(this.interruptGraceTimer);
       this.interruptGraceTimer = null;
@@ -308,15 +368,14 @@ export class ConversationFlowController {
   // filler 文本（嗯/哦）在抢话语境下不算真打断：final 时取消 pending，interim 时重新武装宽限。
   // 返回 true 表示已消费该事件（调用方应 return）；false 表示走正常处理。
   handleFillerText(isFinal: boolean): boolean {
-    if (!(this.host.agentAudible || this.pendingInterrupt || Date.now() - this.lastBargeInAt < 1500)) return false;
+    if (!(this.agentAudible || this.phase === 'interruptGrace' || Date.now() - this.lastBargeInAt < 1500)) return false;
     if (isFinal) {
       this.clearPendingInterrupt();
       this.pendingVocals.reset();
-    } else if (this.pendingInterrupt) {
+    } else if (this.phase === 'interruptGrace') {
       if (this.interruptGraceTimer !== null) clearTimeout(this.interruptGraceTimer);
       this.interruptGraceTimer = setTimeout(() => {
         this.interruptGraceTimer = null;
-        this.pendingInterrupt = false;
         this.doBargeIn('rtc');
       }, this.timing.interruptGraceMs);
     }
@@ -330,7 +389,7 @@ export class ConversationFlowController {
     this.host.gate.invalidate();
     this.host.rtc?.clear();
     this.host.resetBackchannel();
-    this.host.stopSpeaking();
+    this.stopSpeaking();
     this.agentDoneAt = 0;
     this.markUserVoice();
     this.armReanswer();
@@ -338,20 +397,26 @@ export class ConversationFlowController {
   }
 
   handleBargeIn(source: 'rtc' | 'asr'): void {
-    if (!this.host.agentAudible) return;
+    if (!this.agentAudible) return;
     if (source === 'rtc') {
-      if (this.pendingInterrupt) return;
-      this.pendingInterrupt = true;
-      if (this.interruptGraceTimer !== null) clearTimeout(this.interruptGraceTimer);
-      this.interruptGraceTimer = setTimeout(() => {
-        this.interruptGraceTimer = null;
-        this.pendingInterrupt = false;
-        this.doBargeIn('rtc');
-      }, this.timing.interruptGraceMs);
+      if (this.phase === 'interruptGrace') return;
+      this.phase = reducePhase(this.phase, { type: 'interrupt', source: 'rtc' }).phase;
+      this.armGraceTimer();
       return;
     }
+    // asr 打断（用户真说了话）：取消宽限，直接执行。
     this.clearPendingInterrupt();
     this.doBargeIn('asr');
+  }
+
+  // 打断宽限计时：到点仍无新的打断确认 → 真正执行 doBargeIn。
+  private armGraceTimer(): void {
+    if (this.interruptGraceTimer !== null) clearTimeout(this.interruptGraceTimer);
+    this.interruptGraceTimer = setTimeout(() => {
+      this.interruptGraceTimer = null;
+      const { effects } = reducePhase(this.phase, { type: 'graceElapsed' });
+      if (effects.some((e) => e.kind === 'doBargeIn')) this.doBargeIn('rtc');
+    }, this.timing.interruptGraceMs);
   }
 
   scheduleHangup(): void {
@@ -402,6 +467,7 @@ export class ConversationFlowController {
 
   // 挂断收尾：清掉所有未决计时器（teardownCall 用）。
   teardown(): void {
+    this.phase = 'idle';
     this.clearReanswer();
     this.lastUserTurn = null;
     this.reanswerCount = 0;

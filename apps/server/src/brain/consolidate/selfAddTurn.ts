@@ -1,5 +1,5 @@
 import type { SelfAdded, SelfAddedStore } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import type { Embedder } from '../../llm/embedding';
 import { cosine } from '../../vector';
 import { parseJsonish } from '../parse';
@@ -26,7 +26,7 @@ const EXTRACT_SYSTEM_PROMPT = `你是「陪伴者人设增补」助手。读「�
 {"added": {"category": "回忆|喜好|习惯|口味|其它", "content": "<一句话>"} | null}`;
 
 export async function consolidateSelfAdded(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: SelfAddedStore;
   userId: string;

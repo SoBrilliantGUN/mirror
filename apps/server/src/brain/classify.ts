@@ -1,4 +1,4 @@
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { parseJsonish } from './parse';
 
 // 统一的「LLM 判定 → 抽 JSON → 解析 → 兜底」分类骨架。
@@ -7,7 +7,7 @@ import { parseJsonish } from './parse';
 // segmentEmotion 是「只出一个词」的非 JSON 输出，形状不同，不走这里。
 // 每个分类器只提供 system、user、parse 纯函数与兜底值，其余（温度 0、try/catch、null 兜底）都在这里。
 export async function classifyJson<T>(
-  llm: DeepSeek,
+  llm: LlmClient,
   model: string,
   opts: {
     system: string;

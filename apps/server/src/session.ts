@@ -36,7 +36,7 @@ import type {
   VocalizationEvent,
 } from '@mirror/contracts';
 import type { Config } from './config';
-import type { DeepSeek } from './llm/deepseek';
+import type { LlmClient } from './llm/client';
 import type { Embedder } from './llm/embedding';
 import type { Obs } from './obs/langfuse';
 import type { HistorySummarizer } from './brain/compress';
@@ -125,8 +125,8 @@ const TOPIC_DRIFT_LIMIT = 3; // 连续提问上限（换话题检测，与主动
 
 export type SessionDeps = {
   cfg: Config;
-  llm: DeepSeek;
-  safetyLlm: DeepSeek;
+  llm: LlmClient;
+  safetyLlm: LlmClient;
   embedder: Embedder;
   memory: MemoryStore;
   askedQuestions: ReturnType<typeof createAskedQuestionsStore>;
@@ -154,8 +154,8 @@ export type SessionDeps = {
 export class CallSession {
   // —— 注入的共享资源（不随通话重置） ——
   private readonly cfg: Config;
-  private readonly llm: DeepSeek;
-  private readonly safetyLlm: DeepSeek;
+  private readonly llm: LlmClient;
+  private readonly safetyLlm: LlmClient;
   private readonly embedder: Embedder;
   private readonly memory: MemoryStore;
   private readonly askedQuestions: SessionDeps['askedQuestions'];
@@ -205,8 +205,6 @@ export class CallSession {
   private readonly userSaid: string[] = [];
   private prevTurnMemoryIds: string[] = [];
   private recentVoiceAt = 0;
-  private agentAudible = false;
-  private speaking = false;
   private userGender: '男' | '女' | null = null;
 
   // 主动发话 / 打断 / 收尾状态机（从本类抽出；跨模块共享状态见其 public 字段）
@@ -258,7 +256,7 @@ export class CallSession {
     this.tts = this.ttsFactory(
       buildTtsEndpoints(this.cfg.speech),
       (pcm) => this.rtc?.pushAgentPcm(pcm),
-      () => { this.agentAudible = true; },
+      () => this.turnTaking.markAudible(),
       (ms) => this.sleep(ms),
     );
     // 招呼语片段缓存：只管加载/落盘；播放与落库仍在本类。
@@ -280,9 +278,6 @@ export class CallSession {
       coachIsActive: () => self.coachTracker.current === 'coach',
       get mood() { return self.mood; },
       get lastAffect() { return self.lastAffect; },
-      get speaking() { return self.speaking; },
-      get agentAudible() { return self.agentAudible; },
-      stopSpeaking: () => { self.speaking = false; self.agentAudible = false; },
     };
     this.turnTaking = new ConversationFlowController(host, this.timing);
   }
@@ -316,7 +311,6 @@ export class CallSession {
     this.disinterestStreak = 0;
     this.perfunctoryStreak = 0;
     this.consecutiveQuestions = 0;
-    this.speaking = false;
     this.userGender = null;
   }
 
@@ -373,15 +367,13 @@ export class CallSession {
           // ASR 和 NLS 始终收——否则陪伴者说话时你抢话，麦克风被门挡住听不见。
           this.asr?.sendAudio(chunk);
           this.sed?.sendPcm(chunk);
-          if (this.speaking) return;
+          if (this.turnTaking.speaking) return;
           if (hasVoicePcm(chunk)) this.recentVoiceAt = Date.now();
           this.acoustic?.push(chunk);
           this.backchannel.feedPcm(chunk);
         },
         onInterrupt: () => this.turnTaking.handleBargeIn('rtc'),
         onPlaybackEnd: () => {
-          this.speaking = false;
-          this.agentAudible = false;
           this.turnTaking.markAgentDone();
           if (this.turnTaking.consumeFarewell()) {
             this.turnTaking.scheduleHangup();
@@ -484,16 +476,16 @@ export class CallSession {
     if (t && isFillerText(t) && this.turnTaking.handleFillerText(isFinal)) {
       return;
     }
-    if (this.agentAudible) {
+    if (this.turnTaking.agentAudible) {
       if (t.length >= 2 || (isFinal && t)) this.turnTaking.handleBargeIn('asr');
       else return;
     }
     if (isFinal && Date.now() - this.recentVoiceAt > 3000) return; // 幻听门控
     if (t) {
       this.recentVoiceAt = Date.now();
-      if (this.speaking) {
+      if (this.turnTaking.speaking) {
         this.gate.invalidate();
-        this.speaking = false;
+        this.turnTaking.stopSpeaking();
       }
       // 独立回合里的纯语气词（嗯/哦/啊）不算真回复：刷新「用户还在」，但不重置「上一句在等回应」，
       // 交给 followup 继续上一话题，别送进模型被误判成「没兴趣、换话题」。
@@ -529,7 +521,7 @@ export class CallSession {
     if (!this.rtc) return;
     const tStart = Date.now();
     const { gen: myGen, signal } = this.gate.begin();
-    this.speaking = true;
+    this.turnTaking.beginTurn();
     // 决策 → 召回 → 装配 → 出句 → 记结果 全在 runTurnPipeline；这里只留门牌 + 观测外壳。
     await this.obs.trace('turn', {
       metadata: { kind: 'respond', personaName: this.persona.name, turnIndex: this.turnCount, dominantVocal },
@@ -625,24 +617,16 @@ export class CallSession {
     }
 
     const messages = buildTurnMessages(ctx, this.memoryBudget, {
+      // 决策信号（mode/stance/frame/emotion/mood/affect/safetyAction/dependence/farewell/coachInvite/celebrate）
+      // 直接展开 plan，不再逐字段手抄 11 个；plan.coachCue 是观测用、装配器不读，随展开丢弃无妨。
+      ...plan,
       text: corrected,
-      mode: plan.mode,
-      stance: plan.stance,
-      frame: plan.frame,
-      coachInvite: plan.coachInvite,
-      celebrate: plan.celebrate,
       goalFollowUp,
-      emotion: plan.emotion,
-      mood: this.mood,
       turnCount: ++this.turnCount,
-      affect: plan.affect,
       userGender: this.userGender,
       switchTopic,
       personaSystemPrompt: buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode, this.cfg.userName),
       vocalizations: vocals,
-      safetyAction: plan.safetyAction,
-      dependence: plan.dependence,
-      farewell: plan.farewell,
       lastAskedQuestion: this.lastQuestionText,
       userSaid: [...this.userSaid],
       recentAsked,
@@ -686,9 +670,9 @@ export class CallSession {
   }
 
   private async speakProactive(kind: ProactiveKind) {
-    if (!this.rtc || this.speaking) return;
+    if (!this.rtc || this.turnTaking.speaking) return;
     const { gen: myGen, signal } = this.gate.begin();
-    this.speaking = true;
+    this.turnTaking.beginTurn();
     let reachedEnd = false;
     console.log('[proactive] 开始：', kind);
     await this.obs.trace('proactive', {
@@ -755,7 +739,6 @@ export class CallSession {
     this.rtc?.close();
     this.rtc = null;
     this.sed?.close();
-    this.speaking = false;
     this.turnTaking.teardown();
     if (this.currentSessionId) {
       const id = this.currentSessionId;
@@ -786,12 +769,12 @@ export class CallSession {
   }
 
   private playCachedGreeting(voice: string, lang: 'zh' | 'en' = 'zh') {
-    if (!this.rtc || this.speaking) return;
+    if (!this.rtc || this.turnTaking.speaking) return;
     const pick = this.greetingClips.pick(`${voice}:${lang}`);
     if (!pick) return;
     console.log('[greeting] 播放缓存招呼语');
-    this.speaking = true;
-    this.agentAudible = true;
+    this.turnTaking.beginTurn();
+    this.turnTaking.markAudible();
     this.turnTaking.markAsked(false);
     this.rtc.pushAgentPcm(pick.clip);
     this.rtc.end();
@@ -809,8 +792,7 @@ export class CallSession {
   // respond 与 speakProactive 的 finally 共用，避免两处手写同样的几行。
   private cleanupInterrupted(myGen: number, reachedEnd: boolean): void {
     if (this.gate.isCurrent(myGen) && !reachedEnd) {
-      this.speaking = false;
-      this.agentAudible = false;
+      this.turnTaking.stopSpeaking();
       this.turnTaking.touchUserVoice();
       this.turnTaking.armIdleCheck();
     }

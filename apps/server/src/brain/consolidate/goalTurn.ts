@@ -1,5 +1,5 @@
 import type { GrowthGoalStore, GrowthStage } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import { parseJsonish } from '../parse';
 
 // 后台课题巩固（异步、不进热路径）：教练轮结束后，把「这轮聊的课题」结构化落进 growth_goals。
@@ -72,7 +72,7 @@ export function deriveStage(g: GoalExtract): GrowthStage | null {
 }
 
 export async function consolidateGoal(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: GrowthGoalStore;
   userId: string;

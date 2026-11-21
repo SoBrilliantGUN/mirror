@@ -1,5 +1,5 @@
 import type { EmotionTag } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 
 // 逐句情绪（B2）：生成后对每个 segment 跑一次轻量分类，把 turn 级 emotion 细到句级，
 // 让多句回复能「一句暖、一句稳」。温度 0、只出一个标签、~100ms 级；失败回退本轮基调，不阻断对话。
@@ -15,7 +15,7 @@ const SEGMENT_EMOTION_SYSTEM = `你是情绪标签器。读「这一句回复 + 
 只输出 warm / tender / steady / natural 之一，不要别的。`;
 
 export async function classifySegmentEmotion(
-  llm: DeepSeek,
+  llm: LlmClient,
   model: string,
   segment: string,
   base: EmotionTag,

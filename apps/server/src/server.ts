@@ -1,7 +1,7 @@
 // 实时通话服务入口：装配配置/存储/LLM → 起 HTTP（router）+ 单会话编排（CallSession）→ 后台做梦巩固。
 import { createServer } from 'node:http';
 import { loadConfig, loadDotEnv } from './config';
-import { DeepSeek } from './llm/deepseek';
+import { LlmClient } from './llm/client';
 import { createEmbedder } from './llm/embedding';
 import { PERSONAS } from './persona';
 import { createTimeAware } from './brain/timeAware';
@@ -45,9 +45,9 @@ export async function main() {
 
   // 可观测：包装 LLM/embedding，运行时通话埋点（无 LANGFUSE key 时整体 no-op）。
   const obs = createObs({ publicKey: cfg.obs.langfusePublicKey, secretKey: cfg.obs.langfuseSecretKey, baseUrl: cfg.obs.langfuseBaseUrl });
-  const llm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl }), 'deepseek');
+  const llm = obs.wrapLlm(new LlmClient({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl }), 'deepseek');
   // L4 安全红线小模型（阿里云百炼 qwen，OpenAI 兼容端点，复用 DashScope key）。
-  const safetyLlm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl }), 'safety-qwen');
+  const safetyLlm = obs.wrapLlm(new LlmClient({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl }), 'safety-qwen');
   // 长期记忆：embedding（百炼）+ pgvector 混合召回。未配 embedding key 时 recall 降级为空记忆。
   const embedder = obs.wrapEmbedder(createEmbedder({ apiKey: cfg.llm.embeddingApiKey, baseUrl: cfg.llm.embeddingBaseUrl, model: cfg.llm.embeddingModel }), 'embed', cfg.llm.embeddingModel);
   const memory = createMemoryStore(pool, embedder, { recallTopK: cfg.memoryRecallTopK });

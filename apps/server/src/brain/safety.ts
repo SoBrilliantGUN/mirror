@@ -4,7 +4,8 @@ import type {
   SafetyAction,
   SafetyCheck,
 } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
+import { parseJsonish } from './parse';
 
 // L4 安全红线：语义级自伤/轻生识别 + 过度依赖识别。
 // - 主检测：独立小模型分类调用（阿里云百炼 qwen，OpenAI 兼容端点），与打分并行。
@@ -42,7 +43,7 @@ const WEAK_WORDS = [
 ];
 
 export type SafetyGuardOptions = {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   timeoutMs?: number;                     // 默认 8000（快速失败走兜底）
   recentCalls7dThreshold?: number;        // 近7天频率阈值，默认 5
@@ -51,11 +52,10 @@ export type SafetyGuardOptions = {
 };
 
 // 解析小模型输出（容错：可能包 markdown 代码块或前后杂字）。可单测。
+// 「剥 fence → 找第一个 {…} → JSON.parse」这套容错统一走 parse.ts 的 parseJsonish，这里只做「抽字段 + 非法回 0」。
 export function parseSafetyJson(raw: string): { crisisLevel: 0 | 1 | 2; dependenceLevel: 0 | 1 | 2 } {
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const brace = raw.match(/\{[\s\S]*\}/);
-  const str = (fence ? fence[1] : brace ? brace[0] : raw).trim();
-  const o = JSON.parse(str) as Record<string, unknown>;
+  const o = parseJsonish(raw);
+  if (!o) throw new Error(`安全评分解析失败，原始输出：${raw}`);
   const lvl = (v: unknown): 0 | 1 | 2 => {
     const n = Number(v);
     return n === 1 || n === 2 ? (n as 0 | 1 | 2) : 0;

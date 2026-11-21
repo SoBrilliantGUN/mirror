@@ -1,4 +1,4 @@
-import type { Tool } from '../llm/deepseek';
+import type { Tool } from '../llm/client';
 
 // 联网搜索工具：描述里写清触发条件，让模型自己判断「这轮要不要搜」。
 export const SEARCH_TOOL: Tool = {

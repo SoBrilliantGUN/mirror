@@ -1,4 +1,4 @@
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { estimateTokens, type HistoryEntry } from './context';
 
 // 上下文压缩（只打「历史对话」块），参考 kima 的五级渐进压缩，但适配 companion 极简形态：
@@ -65,8 +65,8 @@ export async function compressHistory(
   return [{ kind: 'summary', marker, text: summary }, ...kept];
 }
 
-// LLM 摘要器工厂（走 DeepSeek 非流式，temperature=0）。
-export function createSummarizer(llm: DeepSeek, model: string): HistorySummarizer {
+// LLM 摘要器工厂（走 LlmClient 非流式，temperature=0）。
+export function createSummarizer(llm: LlmClient, model: string): HistorySummarizer {
   return async (entries: HistoryEntry[]): Promise<string> => {
     const text = historyToText(entries);
     const out = await llm.chat(

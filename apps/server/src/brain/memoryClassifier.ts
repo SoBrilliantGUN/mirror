@@ -1,5 +1,5 @@
 import type { MemoryKind } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { classifyJson } from './classify';
 import { parseEnum, parseJsonish } from './parse';
 import { MEMORY_KIND_GLOSS } from './memoryTaxonomy';
@@ -23,7 +23,7 @@ function parseMemoryTypeObj(o: Record<string, unknown>): MemoryKind | null {
 }
 
 export async function classifyMemory(
-  llm: DeepSeek,
+  llm: LlmClient,
   model: string,
   raw: string,
 ): Promise<MemoryKind | null> {

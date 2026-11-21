@@ -15,19 +15,19 @@ import type {
   TurnResult,
   VocalizationEvent,
 } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import type { ModeTracker } from './modeTracker';
 import type { CoachTracker } from './coach';
 import { classifyCoachCue } from './coach';
-import { decideEmotion, decideStance, scoreAffect } from './decide';
+import { scoreAffect } from './decide';
 import { streamMessages } from './generate';
 import { buildTurnMessages, emptyRecall } from './assemble';
 import { classifySegmentEmotion } from './segmentEmotion';
-import { updateMood } from './mood';
+import { decideEmotion, decideStance, updateMood } from './emotion';
 import { classifyFarewell } from './farewell';
 
 export type TurnDeps = {
-  llm: DeepSeek;
+  llm: LlmClient;
   scoreModel: string;
   generateModel: string;
   safetyGuard: SafetyGuard;

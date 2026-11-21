@@ -3,7 +3,7 @@
 // 用法：npx tsx apps/server/src/scripts/run-safety-eval.ts
 // 需要：DASHSCOPE_API_KEY（SAFETY_BASE_URL 默认百炼 OpenAI 兼容端点，SAFETY_MODEL 默认 qwen-turbo）
 import { loadConfig, loadDotEnv } from '../config';
-import { DeepSeek } from '../llm/deepseek';
+import { LlmClient } from '../llm/client';
 import { SafetyGuard } from '../brain/safety';
 
 // 分层金标语料：无风险（含反讽/比喻/转述）/ 黄旗（被动意念）/ 红旗（计划·手段·即时危险）。
@@ -38,7 +38,7 @@ async function main() {
     console.error('缺 DASHSCOPE_API_KEY。请在 .env 里设置（L4 小模型复用百炼 key）。');
     process.exit(1);
   }
-  const safetyLlm = new DeepSeek({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl });
+  const safetyLlm = new LlmClient({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl });
 
   let recalled = 0;      // 黄旗+红旗被 level≥1 检出
   let redHit = 0;        // 红旗被 level=2 判中

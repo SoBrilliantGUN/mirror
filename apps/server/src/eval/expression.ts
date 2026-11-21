@@ -2,7 +2,7 @@
 // 与轴 1（关系能力）正交：轴 1 评「接住没接住」，这里评「像不像人」。
 // 指标定义与锚点见 docs/评测指标.md §2；范围限 V0 上线的 4 位人设。
 import type { Persona } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { parseJsonish } from '../brain/parse';
 
 export type ScoreEntry = { name: string; value: number; dataType: 'NUMERIC' | 'BOOLEAN' };
@@ -114,7 +114,7 @@ function buildJudgeUserPrompt(p: {
 
 // 跑程序化 4 项 + 4 个 judge，返回可直写 LangFuse 的 score 列表。
 export async function scoreExpressionTurn(
-  llm: DeepSeek,
+  llm: LlmClient,
   model: string,
   input: { persona: Persona; otherPersonas?: Persona[]; history?: string; userTurn: string; response: string },
 ): Promise<ScoreEntry[]> {

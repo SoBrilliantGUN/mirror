@@ -1,5 +1,5 @@
 import type { Affect, Mode, SafetyAction } from '@mirror/contracts';
-import { decideMode } from './decide';
+import { decideMode } from './emotion';
 
 // 防抖：退出 careful 需连续 2 轮平稳（放 L5 状态机，这里给一个有状态的 tracker）。
 export class ModeTracker {

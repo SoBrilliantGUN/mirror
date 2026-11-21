@@ -6,7 +6,7 @@
 // - 所有埋点 emit 都是 SDK 本地入队 + 后台异步 flush，且被 guard 包住——埋点失败绝不抛回热路径。
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Langfuse, type LangfuseTraceClient } from 'langfuse';
-import type { DeepSeek, ChatMessage, Tool, ChatOptions, StreamEvent } from '../llm/deepseek';
+import type { LlmClient, ChatMessage, Tool, ChatOptions, StreamEvent } from '../llm/client';
 import type { Embedder } from '../llm/embedding';
 
 export type ObsSession = { sessionId: string; userId: string; personaName: string };
@@ -29,7 +29,7 @@ export type Obs = {
   // 当前 trace 补写 output（回合最终回复文本，方便 Session 时间线扫读）。
   setOutput(output: unknown): void;
   currentTraceId(): string | null;
-  wrapLlm(inner: DeepSeek, label: string): DeepSeek;
+  wrapLlm(inner: LlmClient, label: string): LlmClient;
   wrapEmbedder(inner: Embedder, label: string, model?: string): Embedder;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
@@ -129,7 +129,7 @@ function realObs(cfg: { publicKey: string; secretKey: string; baseUrl: string })
       return als.getStore()?.trace.id ?? null;
     },
 
-    wrapLlm(inner: DeepSeek, label: string): DeepSeek {
+    wrapLlm(inner: LlmClient, label: string): LlmClient {
       return {
         chat: (messages: ChatMessage[], opts: ChatOptions) =>
           gen('chat', label, opts.model, messages, () => inner.chat(messages, opts)),
@@ -140,7 +140,7 @@ function realObs(cfg: { publicKey: string; secretKey: string; baseUrl: string })
           genStream(als.getStore() ?? null, label, opts.model, messages, inner.stream(messages, opts)),
         streamWithTools: (messages: ChatMessage[], tools: Tool[], opts: ChatOptions) =>
           genStreamTools(als.getStore() ?? null, label, opts.model, messages, inner.streamWithTools(messages, tools, opts)),
-      } as unknown as DeepSeek;
+      } as unknown as LlmClient;
     },
 
     wrapEmbedder(inner: Embedder, label: string, model?: string): Embedder {

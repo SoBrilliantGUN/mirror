@@ -1,5 +1,5 @@
 import type { IdentityStore, MemoryStore } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import { parseJsonish } from '../parse';
 
 // 记忆巩固的「抽象升级」步：把已积累的「情节记忆」退一步酿成「稳定事实 fact」「结构化身份 identity」
@@ -42,7 +42,7 @@ export type ReflectResult = {
 };
 
 export async function reflectOnMemory(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: MemoryStore;
   identity: IdentityStore;

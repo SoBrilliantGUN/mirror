@@ -2,9 +2,9 @@
 // 运行：npm test
 import { strict as assert } from 'node:assert';
 import type { Affect, SafetyAction } from '@mirror/contracts';
-import { decideMode, decideStance, decideEmotion, parseAffect } from '../src/brain/decide';
+import { parseAffect } from '../src/brain/decide';
+import { decideMode, decideStance, decideEmotion, updateMood } from '../src/brain/emotion';
 import { ModeTracker } from '../src/brain/modeTracker';
-import { updateMood } from '../src/brain/mood';
 import { parseEmotionTag } from '../src/brain/segmentEmotion';
 
 let passed = 0;

@@ -1,5 +1,5 @@
 import type { Frame, MemoryKind, MemoryStore, GrowthGoalStore, SelfAddedStore } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import type { Embedder } from '../../llm/embedding';
 import type { PrefetchCache } from '../assemble';
 import { consolidateTurn, prefetchNextTurn } from './memoryTurn';
@@ -22,7 +22,7 @@ import { consolidateSelfAdded, touchSelfAdded, SELF_ADDED_TTL_DAYS } from './sel
 // 主写（consolidateTurn）await 拿结果（供会话更新 prevTurnMemoryIds / userSaid），其余后台跑。
 
 export type AfterTurnDeps = {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   memory: MemoryStore;
   goals: GrowthGoalStore;

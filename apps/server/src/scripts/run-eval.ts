@@ -2,7 +2,7 @@
 // 用法：npx tsx apps/server/src/scripts/run-eval.ts
 // 需要：DEEPSEEK_API_KEY；可选 LANGFUSE_PUBLIC_KEY / SECRET_KEY / BASEURL（上报）
 import { loadConfig, loadDotEnv } from '../config';
-import { DeepSeek } from '../llm/deepseek';
+import { LlmClient } from '../llm/client';
 import { PERSONAS } from '../persona';
 import { scoreExpressionTurn } from '../eval/expression';
 import { NoopSafetyGuard, neutralAcoustic } from '../fallbacks';
@@ -114,7 +114,7 @@ async function main() {
     console.error('缺 DEEPSEEK_API_KEY。请在环境变量里设置，或复制 .env.example 为 .env。');
     process.exit(1);
   }
-  const llm = new DeepSeek({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl });
+  const llm = new LlmClient({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl });
 
   // LangFuse（可选：没配 key 就只本地跑 judge）
   const lfPublic = process.env.LANGFUSE_PUBLIC_KEY;

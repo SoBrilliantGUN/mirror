@@ -4,7 +4,7 @@
 
 | L 层 | 含义 | 文件 |
 |---|---|---|
-| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分+判定）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`coach.ts`（教练意图+Frame 状态机） |
+| L3 | 情绪打分 / 判定 / 生成 | `decide.ts`（打分 `scoreAffect`）+ `emotion.ts`（判定 `decideMode/Stance/Emotion` + 心境 `updateMood`）、`turn.ts`（一轮决策 `planTurn`）、`assemble.ts`（召回+装配）、`generate.ts`（流式出句）、`generationGate.ts`（代际中止门：哪次生成还作数）、`topicSwitch.ts`（不感兴趣/敷衍→换话题）、`prompts.ts`（系统提示词）、`context.ts`（分层 user prompt）、`coach.ts`（教练意图+Frame 状态机） |
 | L4 | 安全红线 | `safety.ts`（危机+过度依赖，独立小模型）、`crisisResources.ts`（热线资源） |
 | L5 | 状态 / 会话 / 记忆 | `modeTracker.ts`、`mood.ts`、`compress.ts`（历史压缩）、`recentSummary.ts`（跨通话概要）、`timeAnchor.ts`/`timeAware.ts`/`holiday.ts`/`timezone.ts`（时间感知）、`ontology.ts`（好奇心维度） |
 | 记忆「写」 | 后台巩固（不进热路径） | `consolidate/`（`index.ts` 总入口 consolidateAfterTurn · memoryTurn · goalTurn · selfAddTurn · dream · reflect） |
@@ -30,7 +30,21 @@ text + acoustic + vocalizations
 
 **存储实现在哪**：`brain/*` 里只有「纯函数 + 接口类型」，真正的 Postgres 实现都在 `store/`（`memory.ts` 等）。`MemoryStore` 等接口契约在 `packages/contracts`。
 
+**地板控制状态机**：`conversationFlow.ts`（`ConversationFlowController`）把「谁来说、何时说、打断、静默、道别」建模成显式状态机——`FloorPhase`（`idle / thinking / speaking / interruptGrace`）+ 纯 reducer `reducePhase` + 薄 driver（时钟/副作用）。关键纪律：**state = 离散控制流位置；计数/时间戳（`noReplyStreak`、`lastVocalRespondAt`、`reanswerCount`）是 context，不建模成状态**（否则状态爆炸）。`speaking`/`agentAudible` 由相位派生，不再散在 `CallSession` 里。打断/宽限/重答等迁移可单测，见 `test/conversationFlow.selftest.ts`。
+
 **四个「分类器」**（LLM 判 → 抽 JSON → 解析 → 兜底）共用 `classify.ts` 的 `classifyJson` 骨架：`farewell.ts`（道别）、`coach.ts`（教练意图）、`memoryClassifier.ts`（记忆分类）；`segmentEmotion.ts`（逐句情绪）是「只出一个词」的非 JSON 输出，单独实现。
+
+**「LLM 调用 + 解析」其实有 5 种形状**（不止 `classifyJson` 一种），接手时先认全，别以为统一了：
+
+| 形状 | 落点 | 为什么不走 `classifyJson` |
+|---|---|---|
+| JSON 单字段分类 | `farewell.ts` / `coach.ts` / `memoryClassifier.ts` | 标准形状，走 `classifyJson` |
+| JSON 多字段打分 | `decide.ts` 的 `scoreAffect` | 输出 4 个字段、要 clamp，非单字段 |
+| 单标签（正则抽） | `segmentEmotion.ts` | 非 JSON，只出一个词 |
+| 自由文本纠错 | `asrCorrect.ts` | 输出就是纠正后的原文，非 JSON |
+| 安全评分（独立小模型） | `safety.ts` 的 `SafetyGuard.check` | 带超时兜底 + episode 去抖，用独立 `parseJsonish` |
+
+> 注意：`parseJsonish`（`parse.ts`）是「剥 fence → 找第一个 `{…}` → JSON.parse」的唯一容错入口，各分类器都要复用它；`safety.ts` 的 `parseSafetyJson` 也已统一走它。
 
 **热路径（每轮）**：`planTurn`（安全+打分+道别+教练意图并行）→ 召回（`recallContext`）→ 装配（`buildTurnMessages`）→ 流式出句（`streamMessages`）。记忆的「写」全部 fire-and-forget，不在热路径。
 

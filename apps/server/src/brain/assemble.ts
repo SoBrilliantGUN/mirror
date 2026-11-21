@@ -16,7 +16,7 @@ import type {
   TimeContext,
   UpcomingDate,
 } from '@mirror/contracts';
-import type { ChatMessage } from '../llm/deepseek';
+import type { ChatMessage } from '../llm/client';
 import { formatPersonaBlock, type PersonaDetail } from '../persona/loadPersona';
 import { buildGoalFollowUpHint, buildLayeredUserPrompt, formatGoalBlock, formatIdentityBlock, formatSelfAddedBlock, formatTimeBlock, type HistoryEntry, type TurnPromptSignals } from './context';
 import { buildGenerateSystemPrompt } from './prompts';

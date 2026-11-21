@@ -1,5 +1,5 @@
 import type { CoachCue, Frame } from '@mirror/contracts';
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { classifyJson } from './classify';
 import { parseBool, parseJsonish, parseStr } from './parse';
 
@@ -45,7 +45,7 @@ export function parseCoachCue(raw: string): CoachCue {
   return parseCoachCueObj(o);
 }
 
-export async function classifyCoachCue(llm: DeepSeek, model: string, text: string): Promise<CoachCue> {
+export async function classifyCoachCue(llm: LlmClient, model: string, text: string): Promise<CoachCue> {
   if (!text.trim()) return NO_CUE; // 纯哭/纯笑无字
   return classifyJson(llm, model, {
     system: COACH_CUE_SYSTEM_PROMPT,

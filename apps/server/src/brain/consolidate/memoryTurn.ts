@@ -1,5 +1,5 @@
 import type { Memory, MemoryKind, MemoryStore, TimeAnchor } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import type { PrefetchCache } from '../assemble';
 import { DIMENSION_LIST, ASPECT_LIST } from '../ontology';
 import { shanghaiParts } from '../timezone';
@@ -45,7 +45,7 @@ function todayForPrompt(now: Date): string {
 
 // 一轮结束后异步写记忆：抽取 → 确定性分类兜底 → 落库。返回写入条数（观测用）。
 export async function consolidateTurn(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: MemoryStore;
   classify: (raw: string) => Promise<MemoryKind | null>;

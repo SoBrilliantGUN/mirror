@@ -1,4 +1,4 @@
-import type { DeepSeek } from '../llm/deepseek';
+import type { LlmClient } from '../llm/client';
 import { classifyJson } from './classify';
 import { parseBool, parseJsonish } from './parse';
 
@@ -25,7 +25,7 @@ export function parseFarewell(raw: string): boolean {
   return parseFarewellObj(o);
 }
 
-export async function classifyFarewell(llm: DeepSeek, model: string, text: string): Promise<boolean> {
+export async function classifyFarewell(llm: LlmClient, model: string, text: string): Promise<boolean> {
   if (!text.trim()) return false; // 纯哭/纯笑无字，谈不上道别
   return classifyJson(llm, model, {
     system: FAREWELL_SYSTEM_PROMPT,

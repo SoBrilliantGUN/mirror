@@ -1,5 +1,5 @@
 import type { IdentityStore, MemoryKind, MemoryStore } from '@mirror/contracts';
-import type { DeepSeek } from '../../llm/deepseek';
+import type { LlmClient } from '../../llm/client';
 import type { Embedder } from '../../llm/embedding';
 import { cosine } from '../../vector';
 import { reflectOnMemory } from './reflect';
@@ -32,7 +32,7 @@ export type DreamResult = {
 };
 
 export async function dreamOnMemory(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: MemoryStore;
   identity: IdentityStore;
@@ -104,7 +104,7 @@ export async function dreamOnMemory(deps: {
 }
 
 async function resolveContradictions(deps: {
-  llm: DeepSeek;
+  llm: LlmClient;
   model: string;
   store: MemoryStore;
   userId: string;
