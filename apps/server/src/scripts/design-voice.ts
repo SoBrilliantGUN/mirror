@@ -5,16 +5,16 @@ import { loadConfig, loadDotEnv } from '../config';
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.dashscopeApiKey) {
+  if (!cfg.speech.dashscopeApiKey) {
     console.error('缺少 DASHSCOPE_API_KEY');
     process.exit(1);
   }
 
-  const url = `${cfg.dashscopeBaseUrl}/api/v1/services/audio/tts/customization`;
+  const url = `${cfg.speech.dashscopeBaseUrl}/api/v1/services/audio/tts/customization`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${cfg.dashscopeApiKey}`,
+      Authorization: `Bearer ${cfg.speech.dashscopeApiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({

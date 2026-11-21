@@ -28,7 +28,7 @@ export async function main() {
   // 桌面版由 Electron 主进程注入 env（不读 .env）；`npm start` 仍读 .env。
   if (process.env.MIRROR_SKIP_DOTENV !== '1') loadDotEnv();
   const cfg = loadConfig();
-  console.log(cfg.bochaApiKey ? '[search] 联网搜索已启用（BOCHA_API_KEY 已配）' : '[search] 联网搜索关闭（未配 BOCHA_API_KEY，模型不会调用 search_web）');
+  console.log(cfg.search.bochaApiKey ? '[search] 联网搜索已启用（BOCHA_API_KEY 已配）' : '[search] 联网搜索关闭（未配 BOCHA_API_KEY，模型不会调用 search_web）');
 
   // 通讯录持久化：Postgres（见 infra/postgres）。连不上则明确报错，避免带病跑。
   const pool = createPool(cfg.databaseUrl);
@@ -44,12 +44,12 @@ export async function main() {
   const transcript = createTranscriptStore(pool); // 逐轮聊天记录（导出/优化用）
 
   // 可观测：包装 LLM/embedding，运行时通话埋点（无 LANGFUSE key 时整体 no-op）。
-  const obs = createObs({ publicKey: cfg.langfusePublicKey, secretKey: cfg.langfuseSecretKey, baseUrl: cfg.langfuseBaseUrl });
-  const llm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.deepseekApiKey, baseUrl: cfg.deepseekBaseUrl }), 'deepseek');
+  const obs = createObs({ publicKey: cfg.obs.langfusePublicKey, secretKey: cfg.obs.langfuseSecretKey, baseUrl: cfg.obs.langfuseBaseUrl });
+  const llm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl }), 'deepseek');
   // L4 安全红线小模型（阿里云百炼 qwen，OpenAI 兼容端点，复用 DashScope key）。
-  const safetyLlm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.dashscopeApiKey, baseUrl: cfg.safetyBaseUrl }), 'safety-qwen');
+  const safetyLlm = obs.wrapLlm(new DeepSeek({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl }), 'safety-qwen');
   // 长期记忆：embedding（百炼）+ pgvector 混合召回。未配 embedding key 时 recall 降级为空记忆。
-  const embedder = obs.wrapEmbedder(createEmbedder({ apiKey: cfg.embeddingApiKey, baseUrl: cfg.embeddingBaseUrl, model: cfg.embeddingModel }), 'embed', cfg.embeddingModel);
+  const embedder = obs.wrapEmbedder(createEmbedder({ apiKey: cfg.llm.embeddingApiKey, baseUrl: cfg.llm.embeddingBaseUrl, model: cfg.llm.embeddingModel }), 'embed', cfg.llm.embeddingModel);
   const memory = createMemoryStore(pool, embedder, { recallTopK: cfg.memoryRecallTopK });
   const askedQuestions = createAskedQuestionsStore(pool); // 近 3 天已问过的问题（防重复提问）
   const conversationSummaries = createConversationSummariesStore(pool); // 最近 3 天对话概要（跨通话「最近聊过什么」）
@@ -59,7 +59,7 @@ export async function main() {
   const dreamRuns = createDreamRunsStore(pool); // 做梦运行记录（前端展示用）
   const holidayMap = await loadHolidayMap(shanghaiParts(new Date()).year); // 节假日/工作日判定
   const timeAware = createTimeAware(memory, holidayMap); // 时间感知（L5）
-  const summarizer = createSummarizer(llm, cfg.generateModel);
+  const summarizer = createSummarizer(llm, cfg.llm.generateModel);
   // 上下文窗口预算：压缩只打 [HISTORY] 历史。窗口切分（合计约 85%，留余量给 system prompt 等固定成本）：
   // [MEMORY] 记忆 35% + [HISTORY] 历史 50%；记忆块内部还有约束子预算 40%（见 context.ts CONSTRAINT_BUDGET_RATIO）。
   const memoryBudget = Math.floor(cfg.contextMaxTokens * 0.35);
@@ -105,7 +105,7 @@ export async function main() {
             const fresh = await memory.listAll(p.name, userId, { since: prev });
             if (fresh.length === 0) continue;
           }
-          const r = await dreamOnMemory({ llm, model: cfg.generateModel, store: memory, identity, embedder, userId, personaName: p.name });
+          const r = await dreamOnMemory({ llm, model: cfg.llm.generateModel, store: memory, identity, embedder, userId, personaName: p.name });
           lastDreamAt.set(p.name, new Date().toISOString());
           console.log(`[dream] ${p.name}：抽象 ${r.abstractedFacts}f/${r.abstractedIdentity}i/${r.abstractedProfile}p，合并 ${r.merged} 条，清矛盾 ${r.resolved} 条`);
           await dreamRuns.log(p.name, userId, r).catch(() => {});

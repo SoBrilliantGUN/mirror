@@ -11,7 +11,7 @@
 //   · 挂断收尾    teardownCall —— 写通话概要 + 结束会话
 //
 // 已拆出去的（这里只留窄回调，不背实现）：
-//   · 主动发话/打断/收尾状态机     → turnTaking.ts（TurnTakingController，借 host 回调触发 respond/speakProactive）
+//   · 主动发话/打断/收尾状态机     → conversationFlow.ts（ConversationFlowController，借 host 回调触发 respond/speakProactive）
 //   · 逐句流水线（生成→切句→TTS→搜索）→ speech/speakPipeline.ts（streamTurnSpeech）
 //   · TTS 合成 + 多端点重试      → speech/ttsEngine.ts（TtsEngine）
 //   · 招呼语片段缓存/落盘         → speech/greetingClips.ts（GreetingClipCache）
@@ -20,7 +20,7 @@
 // 会话级字段分组：
 //   · 注入共享资源（不随通话重置）: cfg / llm / safetyLlm / embedder / memory / tts / greetingClips …
 //   · 会话状态（每通重置）: tracker / coachTracker / mood / lastAffect / persona / lang / history …
-//   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …（turn-taking 共享状态见 turnTaking.ts）
+//   · 实时互锁（计时器 + 代际中止）: gate（GenerationGate）/ speaking / agentAudible …（turn-taking 共享状态见 conversationFlow.ts）
 // ============================================================
 import type {
   AcousticFeatures,
@@ -58,7 +58,7 @@ import { BackchannelEngine, BACKCHANNEL_PHRASES, concatPcm, hasVoicePcm } from '
 import { PERSONAS, resolvePersona, resolvePersonaDetails, resolveVoice } from './persona';
 import { createPersonaMatcher } from './persona/loadPersona';
 import { streamTurnSpeech } from './speech/speakPipeline';
-import { TurnTakingController, DEFAULT_TIMING, type TurnTakingTiming, type TurnTakingHost, type ProactiveKind } from './turnTaking';
+import { ConversationFlowController, DEFAULT_TIMING, type ConversationFlowTiming, type ConversationFlowHost, type ProactiveKind } from './conversationFlow';
 import { ModeTracker } from './brain/modeTracker';
 import { CoachTracker } from './brain/coach';
 import { planTurn, type TurnPlan } from './brain/turn';
@@ -143,7 +143,7 @@ export type SessionDeps = {
   historyBudget: number;
   userId: string;
   // 主动发话 / 打断计时（缺省 DEFAULT_TIMING；测试传小值加速）
-  timing?: Partial<TurnTakingTiming>;
+  timing?: Partial<ConversationFlowTiming>;
   // 测试注入点（默认用真实实现；测试传 mock 以脱离网络/设备）
   rtcFactory?: (cbs: RtcCallbacks, ice: RtcIceOptions) => RtcPeer;
   asrFactory?: () => ParaformerRealtimeASR;
@@ -171,7 +171,7 @@ export class CallSession {
   private readonly memoryBudget: number;
   private readonly historyBudget: number;
   private readonly userId: string;
-  private readonly timing: TurnTakingTiming;
+  private readonly timing: ConversationFlowTiming;
 
   // —— 会话级状态（每通重置） ——
   private tracker = new ModeTracker();
@@ -210,7 +210,7 @@ export class CallSession {
   private userGender: '男' | '女' | null = null;
 
   // 主动发话 / 打断 / 收尾状态机（从本类抽出；跨模块共享状态见其 public 字段）
-  private readonly turnTaking: TurnTakingController;
+  private readonly turnTaking: ConversationFlowController;
 
   private readonly backchannel = new BackchannelEngine(
     { silenceMs: 500, cooldownMs: 15000, maxPerTurn: 6, gain: 0.5, minSpeechMs: 30000 },
@@ -253,23 +253,23 @@ export class CallSession {
     this.ttsFactory = deps.ttsFactory ?? ((endpoints, pushPcm, onStart, sleep) => new TtsEngine(endpoints, pushPcm, onStart, sleep));
     this.greetingClipsFactory = deps.greetingClipsFactory ?? ((tts) => new GreetingClipCache(tts));
     // safetyGuard 依赖 safetyLlm/cfg，字段初始化在构造器赋值之后再建。
-    this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
+    this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.llm.safetyModel });
     // TTS 合成引擎：把「整句合成 + 多端点重试」委托出去，只留 pushPcm 回调指向当前 RTC。
     this.tts = this.ttsFactory(
-      buildTtsEndpoints(this.cfg),
+      buildTtsEndpoints(this.cfg.speech),
       (pcm) => this.rtc?.pushAgentPcm(pcm),
       () => { this.agentAudible = true; },
       (ms) => this.sleep(ms),
     );
     // 招呼语片段缓存：只管加载/落盘；播放与落库仍在本类。
     this.greetingClips = this.greetingClipsFactory({
-      wsUrl: this.cfg.dashscopeWsUrl,
-      apiKey: this.cfg.dashscopeApiKey,
-      model: this.cfg.cosyvoiceModel,
+      wsUrl: this.cfg.speech.dashscopeWsUrl,
+      apiKey: this.cfg.speech.dashscopeApiKey,
+      model: this.cfg.speech.cosyvoiceModel,
     });
     // 主动发话 / 打断状态机：借出窄回调，状态机不碰本类的 I/O 细节。
     const self = this;
-    const host: TurnTakingHost = {
+    const host: ConversationFlowHost = {
       respond: (t, v, d) => self.respond(t, v, d),
       speakProactive: (k) => self.speakProactive(k),
       gate: self.gate,
@@ -284,7 +284,7 @@ export class CallSession {
       get agentAudible() { return self.agentAudible; },
       stopSpeaking: () => { self.speaking = false; self.agentAudible = false; },
     };
-    this.turnTaking = new TurnTakingController(host, this.timing);
+    this.turnTaking = new ConversationFlowController(host, this.timing);
   }
 
   get personaName(): string {
@@ -324,7 +324,7 @@ export class CallSession {
   preloadGreetings(): void {
     for (const p of Object.values(PERSONAS)) {
       if (!p.available) continue;
-      const voice = resolveVoice(p.name, this.cfg.cosyvoiceVoice);
+      const voice = resolveVoice(p.name, this.cfg.speech.cosyvoiceVoice);
       this.greetingClips.ensure(voice, p.name, p.voiceTint, p.rate ?? 1.0).catch((e) =>
         console.warn(`[greeting] ${p.name} 招呼语预热失败：`, e),
       );
@@ -344,7 +344,7 @@ export class CallSession {
     const details = resolvePersonaDetails(this.persona.name);
     this.personaMatcher = details.length ? createPersonaMatcher(this.embedder, details) : null;
     if (details.length) console.log(`[persona] ${this.persona.name} 启用渐进式记忆：共 ${details.length} 条详情待命中加载`);
-    if (resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang) === this.cfg.cosyvoiceVoice && this.persona.name !== '程书衡') {
+    if (resolveVoice(this.persona.name, this.cfg.speech.cosyvoiceVoice, this.lang) === this.cfg.speech.cosyvoiceVoice && this.persona.name !== '程书衡') {
       console.warn(`[voice] ${this.persona.name} 尚未配置专属音色，暂用程书衡音色；用 npm run enroll-voices 建模后填 env。`);
     }
     this.setupBackchannel();
@@ -352,11 +352,11 @@ export class CallSession {
     this.asr = this.asrFactory();
     this.acoustic = new AcousticFeatureExtractor();
     this.resetSessionState();
-    this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.safetyModel });
+    this.safetyGuard = new SafetyGuard({ llm: this.safetyLlm, model: this.cfg.llm.safetyModel });
     this.conversationSummaries.recent(this.persona.name, this.userId, 3)
       .then(async (summaries) => {
         if (summaries.length === 0) return;
-        this.recentSummaryText = await mergeCallSummaries(this.llm, this.cfg.generateModel, summaries).catch(() => summaries.join('\n'));
+        this.recentSummaryText = await mergeCallSummaries(this.llm, this.cfg.llm.generateModel, summaries).catch(() => summaries.join('\n'));
       })
       .catch(() => {});
 
@@ -396,14 +396,14 @@ export class CallSession {
           this.teardownCall('close');
         },
       },
-      { portRange: this.cfg.icePortRange, hostAddress: this.cfg.iceHostAddress },
+      { portRange: this.cfg.ice.portRange, hostAddress: this.cfg.ice.hostAddress },
     );
     await this.sed?.start();
     try {
       await this.asr.start({
-        wsUrl: this.cfg.dashscopeWsUrl,
-        apiKey: this.cfg.dashscopeApiKey,
-        model: this.cfg.paraformerModel,
+        wsUrl: this.cfg.speech.dashscopeWsUrl,
+        apiKey: this.cfg.speech.dashscopeApiKey,
+        model: this.cfg.speech.paraformerModel,
         languageHints: ['zh', 'en'],
         onResult: (text, isFinal) => this.onAsrResult(text, isFinal),
       });
@@ -413,7 +413,7 @@ export class CallSession {
       this.rtc = null;
       this.sed?.close();
       const detail = (e as Error)?.message ?? String(e);
-      const hint = this.cfg.dashscopeApiKey
+      const hint = this.cfg.speech.dashscopeApiKey
         ? `（${detail}，请检查 DASHSCOPE_API_KEY / DASHSCOPE_WS_URL 是否有效）`
         : '（未配置 DASHSCOPE_API_KEY，请先在「设置」里填写语音服务 Key）';
       return { error: `语音识别服务连接失败${hint}`, status: 502 };
@@ -421,7 +421,7 @@ export class CallSession {
     const answer = await this.rtc.handleOffer(body.sdp);
 
     // 一联通就打招呼（异步、不阻塞响应）：优先缓存片段，预热失败回退 LLM 生成。
-    const greetVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
+    const greetVoice = resolveVoice(this.persona.name, this.cfg.speech.cosyvoiceVoice, this.lang);
     this.turnTaking.setIdleFired();
     void (async () => {
       try {
@@ -442,7 +442,7 @@ export class CallSession {
   // 副语言 backchannel：复位 + 切音色 + 预生成片段（懒、按音色缓存）。
   private setupBackchannel(): void {
     this.backchannel.reset();
-    const backVoice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
+    const backVoice = resolveVoice(this.persona.name, this.cfg.speech.cosyvoiceVoice, this.lang);
     this.backchannel.setVoice(backVoice);
     if (!this.backchannel.hasClips(backVoice)) {
       this.preloadBackchannelClips(backVoice, this.persona.name).catch((e) =>
@@ -453,15 +453,15 @@ export class CallSession {
 
   // 哭/笑检测（NLS 云端）：收 PCM、出事件。连不上/未配凭证时 onEvent 不被调用，主链路照常。
   private setupNls(): void {
-    const hasToken = Boolean(this.cfg.nlsToken);
-    const hasAk = Boolean(this.cfg.nlsAkId && this.cfg.nlsAkSecret);
-    if (this.cfg.nlsEnabled && this.cfg.nlsAppKey && (hasToken || hasAk)) {
+    const hasToken = Boolean(this.cfg.nls.token);
+    const hasAk = Boolean(this.cfg.nls.akId && this.cfg.nls.akSecret);
+    if (this.cfg.nls.enabled && this.cfg.nls.appKey && (hasToken || hasAk)) {
       this.sed = new NlsSoundEventDetector(
         {
-          appKey: this.cfg.nlsAppKey,
-          token: this.cfg.nlsToken || undefined,
-          akId: this.cfg.nlsAkId || undefined,
-          akSecret: this.cfg.nlsAkSecret || undefined,
+          appKey: this.cfg.nls.appKey,
+          token: this.cfg.nls.token || undefined,
+          akId: this.cfg.nls.akId || undefined,
+          akSecret: this.cfg.nls.akSecret || undefined,
         },
         (ev) => {
           this.turnTaking.recordVocal(ev);
@@ -469,7 +469,7 @@ export class CallSession {
           this.turnTaking.scheduleVocalRespond();
         },
       );
-    } else if (!this.cfg.nlsEnabled) {
+    } else if (!this.cfg.nls.enabled) {
       this.sed = null;
       console.warn('[NLS] 已通过 NLS_ENABLED=false 关闭哭/笑检测');
     } else {
@@ -546,7 +546,7 @@ export class CallSession {
     vocals: VocalizationEvent[],
     dominantVocal: DominantVocal,
   ): Promise<void> {
-    const searchEnabled = Boolean(this.cfg.bochaApiKey);
+    const searchEnabled = Boolean(this.cfg.search.bochaApiKey);
     let reachedEnd = false;
     try {
     const acoustics = this.acoustic?.finalize(userText) ?? neutralAcoustic();
@@ -581,12 +581,12 @@ export class CallSession {
     // 向量召回对同音错字不敏感，但模型读到的正文、以及后台写进记忆的正文，必须是纠正后的。
     const [plan, ctx, recentAsked, corrected] = await Promise.all([
       this.obs.span('decision', () => planTurn(
-        { llm: this.llm, scoreModel: this.cfg.scoreModel, generateModel: this.cfg.generateModel, safetyGuard: this.safetyGuard, tracker: this.tracker, coachTracker: this.coachTracker, mood: this.mood },
+        { llm: this.llm, scoreModel: this.cfg.llm.scoreModel, generateModel: this.cfg.llm.generateModel, safetyGuard: this.safetyGuard, tracker: this.tracker, coachTracker: this.coachTracker, mood: this.mood },
         { text: userText, acoustic: acoustics, vocalizations: vocals, dominantVocal, persona: this.persona, dependenceSignals },
       )),
       this.obs.span('recall', () => recallContext(assembleDeps, { text: userText, history: this.history, loadedDetails: this.loadedDetails })),
       this.askedQuestions.recent(this.persona.name, this.userId, 3),
-      this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.generateModel, userText, formatHistory(this.history.slice(-6)))),
+      this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.llm.generateModel, userText, formatHistory(this.history.slice(-6)))),
     ]);
     if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
@@ -651,20 +651,20 @@ export class CallSession {
       searchEnabled,
     });
 
-    const voice = resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang);
+    const voice = resolveVoice(this.persona.name, this.cfg.speech.cosyvoiceVoice, this.lang);
     const { fullText, awaitsResponse, firstTokenMs } = await streamTurnSpeech({
       llm: this.llm,
-      generateModel: this.cfg.generateModel,
+      generateModel: this.cfg.llm.generateModel,
       messages,
       baseEmotion: plan.emotion,
       voice,
       voiceTint: this.persona.voiceTint,
       rate: this.persona.rate ?? 1.0,
-      cosyvoiceModel: this.cfg.cosyvoiceModel,
-      dashscopeWsUrl: this.cfg.dashscopeWsUrl,
-      dashscopeApiKey: this.cfg.dashscopeApiKey,
-      bochaApiKey: this.cfg.bochaApiKey,
-      bochaBaseUrl: this.cfg.bochaBaseUrl,
+      cosyvoiceModel: this.cfg.speech.cosyvoiceModel,
+      dashscopeWsUrl: this.cfg.speech.dashscopeWsUrl,
+      dashscopeApiKey: this.cfg.speech.dashscopeApiKey,
+      bochaApiKey: this.cfg.search.bochaApiKey,
+      bochaBaseUrl: this.cfg.search.bochaBaseUrl,
       searchEnabled,
       gate: this.gate,
       gen: myGen,
@@ -706,15 +706,15 @@ export class CallSession {
           mood: this.mood,
         },
       );
-      const text = await generateProactiveText(this.llm, this.cfg.generateModel, system);
+      const text = await generateProactiveText(this.llm, this.cfg.llm.generateModel, system);
       if (!this.gate.isCurrent(myGen)) return;
       const { clean: seg, awaits } = extractAwaits(text.trim());
       if (!seg) return;
       console.log('[proactive] 文本：', seg);
       this.obs.setOutput(seg);
       await this.obs.span('tts', () => this.tts.synthesize({
-        model: this.cfg.cosyvoiceModel,
-        voice: resolveVoice(this.persona.name, this.cfg.cosyvoiceVoice, this.lang),
+        model: this.cfg.speech.cosyvoiceModel,
+        voice: resolveVoice(this.persona.name, this.cfg.speech.cosyvoiceVoice, this.lang),
         instruction: buildInstruction('natural', this.persona.voiceTint) + tailHint(seg),
         text: seg,
         rate: this.persona.rate ?? 1.0,
@@ -747,7 +747,7 @@ export class CallSession {
     const snap = this.history;
     this.history = [];
     if (snap.length > 0) {
-      summarizeCall(this.llm, this.cfg.generateModel, snap)
+      summarizeCall(this.llm, this.cfg.llm.generateModel, snap)
         .then((s) => this.conversationSummaries.save(this.persona.name, this.userId, s))
         .catch((e) => console.warn('[summary] 写最近概要失败：', e));
     }
@@ -771,9 +771,9 @@ export class CallSession {
     for (const phrase of BACKCHANNEL_PHRASES) {
       const parts: Uint8Array[] = [];
       for await (const pcm of streamTTS({
-        wsUrl: this.cfg.dashscopeWsUrl,
-        apiKey: this.cfg.dashscopeApiKey,
-        model: this.cfg.cosyvoiceModel,
+        wsUrl: this.cfg.speech.dashscopeWsUrl,
+        apiKey: this.cfg.speech.dashscopeApiKey,
+        model: this.cfg.speech.cosyvoiceModel,
         voice,
         instruction: buildInstruction('natural', this.persona.voiceTint) + '。这句要轻声、短促，像随口应一声，不抢话。',
         text: phrase,
@@ -873,12 +873,12 @@ export class CallSession {
 
     consolidateAfterTurn({
       llm: this.llm,
-      model: this.cfg.generateModel,
+      model: this.cfg.llm.generateModel,
       memory: this.memory,
       goals: this.goals,
       selfAdded: this.selfAdded,
       embedder: this.embedder,
-      classify: (raw) => classifyMemory(this.llm, this.cfg.generateModel, raw),
+      classify: (raw) => classifyMemory(this.llm, this.cfg.llm.generateModel, raw),
       userId: this.userId,
       personaName: this.persona.name,
       userText,

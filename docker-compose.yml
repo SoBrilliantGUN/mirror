@@ -33,7 +33,7 @@ services:
       DATABASE_URL: postgresql://mirror:${POSTGRES_PASSWORD}@postgres:5432/mirror
       # LangFuse 在独立 compose（infra/langfuse）里、暴露在宿主 3002；容器内经 host.docker.internal 回宿主。
       # 宿主上的离线评测脚本仍读 .env 的 localhost:3002，二者互不干扰。
-      LANGFUSE_BASEURL: http://host.docker.internal:3002
+      LANGFUSE_BASE_URL: http://host.docker.internal:3002
     extra_hosts:
       # Docker Desktop 自带 host.docker.internal；Linux/WSL2 原生 Docker 靠这行 host-gateway 解析
       - "host.docker.internal:host-gateway"

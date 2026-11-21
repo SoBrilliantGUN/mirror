@@ -34,11 +34,11 @@ const GOLD: { id: string; text: string; expected: 0 | 1 | 2 }[] = [
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.dashscopeApiKey) {
+  if (!cfg.speech.dashscopeApiKey) {
     console.error('缺 DASHSCOPE_API_KEY。请在 .env 里设置（L4 小模型复用百炼 key）。');
     process.exit(1);
   }
-  const safetyLlm = new DeepSeek({ apiKey: cfg.dashscopeApiKey, baseUrl: cfg.safetyBaseUrl });
+  const safetyLlm = new DeepSeek({ apiKey: cfg.speech.dashscopeApiKey, baseUrl: cfg.llm.safetyBaseUrl });
 
   let recalled = 0;      // 黄旗+红旗被 level≥1 检出
   let redHit = 0;        // 红旗被 level=2 判中
@@ -49,7 +49,7 @@ async function main() {
 
   for (const g of GOLD) {
     // 每条独立用一个新 SafetyGuard，避免 episode 去抖污染跨用例判定。
-    const guard = new SafetyGuard({ llm: safetyLlm, model: cfg.safetyModel });
+    const guard = new SafetyGuard({ llm: safetyLlm, model: cfg.llm.safetyModel });
     const { crisis } = await guard.check(g.text);
     const actual = crisis.level;
     const mark = actual === g.expected ? '✓' : '✗';

@@ -15,11 +15,11 @@ const EMOTIONS: EmotionTag[] = requested.length ? requested : ALL;
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.dashscopeApiKey) {
+  if (!cfg.speech.dashscopeApiKey) {
     console.error('缺少 DASHSCOPE_API_KEY');
     process.exit(1);
   }
-  if (!cfg.cosyvoiceVoice) {
+  if (!cfg.speech.cosyvoiceVoice) {
     console.error('缺少 COSYVOICE_VOICE（音色 ID）');
     process.exit(1);
   }
@@ -28,9 +28,9 @@ async function main() {
   for (const emotion of EMOTIONS) {
     const instruction = buildInstruction(emotion, PERSONAS['程书衡'].voiceTint);
     const prosody = EMOTION_PROSODY[emotion];
-    const audio = await synthesize(cfg.dashscopeApiKey, SAMPLE_TEXT, instruction, {
-      model: cfg.cosyvoiceModel,
-      voice: cfg.cosyvoiceVoice,
+    const audio = await synthesize(cfg.speech.dashscopeApiKey, SAMPLE_TEXT, instruction, {
+      model: cfg.speech.cosyvoiceModel,
+      voice: cfg.speech.cosyvoiceVoice,
       rate: prosody.rate,
       pitch: prosody.pitch,
     });

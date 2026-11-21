@@ -7,18 +7,18 @@ async function main() {
   loadDotEnv();
   const cfg = loadConfig();
 
-  if (!cfg.nlsAppKey) {
+  if (!cfg.nls.appKey) {
     console.error('未配 NLS_APPKEY');
     process.exit(1);
   }
-  if (!cfg.nlsToken && !(cfg.nlsAkId && cfg.nlsAkSecret)) {
+  if (!cfg.nls.token && !(cfg.nls.akId && cfg.nls.akSecret)) {
     console.error('未配 NLS_TOKEN（或 NLS_ACCESS_KEY_ID/SECRET）');
     process.exit(1);
   }
 
   console.log('[test] 正在连接 NLS 声音事件检测...');
   const det = new NlsSoundEventDetector(
-    { appKey: cfg.nlsAppKey, token: cfg.nlsToken || undefined, akId: cfg.nlsAkId || undefined, akSecret: cfg.nlsAkSecret || undefined },
+    { appKey: cfg.nls.appKey, token: cfg.nls.token || undefined, akId: cfg.nls.akId || undefined, akSecret: cfg.nls.akSecret || undefined },
     (ev) => console.log('[event] 检测到：', JSON.stringify(ev)),
   );
   await det.start();

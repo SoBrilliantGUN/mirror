@@ -9,11 +9,11 @@ import { PERSONAS } from '../persona/generated';
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.dashscopeApiKey) {
+  if (!cfg.speech.dashscopeApiKey) {
     console.error('缺 DASHSCOPE_API_KEY');
     process.exit(1);
   }
-  if (!cfg.cosyvoiceVoice) {
+  if (!cfg.speech.cosyvoiceVoice) {
     console.error('缺 COSYVOICE_VOICE');
     process.exit(1);
   }
@@ -26,10 +26,10 @@ async function main() {
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   for await (const chunk of streamTTS({
-    wsUrl: cfg.dashscopeWsUrl,
-    apiKey: cfg.dashscopeApiKey,
-    model: cfg.cosyvoiceModel,
-    voice: cfg.cosyvoiceVoice,
+    wsUrl: cfg.speech.dashscopeWsUrl,
+    apiKey: cfg.speech.dashscopeApiKey,
+    model: cfg.speech.cosyvoiceModel,
+    voice: cfg.speech.cosyvoiceVoice,
     instruction,
     text,
     rate: prosody.rate,

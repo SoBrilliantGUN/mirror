@@ -75,11 +75,11 @@ const SPECS_EN: Spec[] = [
 
 async function enrollOne(cfg: ReturnType<typeof loadConfig>, spec: Spec): Promise<void> {
   console.log(`\n===== 建模 ${spec.name}（prefix=${spec.prefix}，lang=${spec.lang}）=====`);
-  const url = `${cfg.dashscopeBaseUrl}/api/v1/services/audio/tts/customization`;
+  const url = `${cfg.speech.dashscopeBaseUrl}/api/v1/services/audio/tts/customization`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${cfg.dashscopeApiKey}`,
+      Authorization: `Bearer ${cfg.speech.dashscopeApiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -114,7 +114,7 @@ async function enrollOne(cfg: ReturnType<typeof loadConfig>, spec: Spec): Promis
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.dashscopeApiKey) {
+  if (!cfg.speech.dashscopeApiKey) {
     console.error('缺少 DASHSCOPE_API_KEY。请在 .env 里设置。');
     process.exit(1);
   }

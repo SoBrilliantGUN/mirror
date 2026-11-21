@@ -12,12 +12,12 @@ import type { MoodState } from '@mirror/contracts';
 async function main() {
   loadDotEnv();
   const cfg = loadConfig();
-  if (!cfg.deepseekApiKey) {
+  if (!cfg.llm.deepseekApiKey) {
     console.error('缺少 DEEPSEEK_API_KEY。请在环境变量里设置，或复制 .env.example 为 .env。');
     process.exit(1);
   }
 
-  const llm = new DeepSeek({ apiKey: cfg.deepseekApiKey, baseUrl: cfg.deepseekBaseUrl });
+  const llm = new DeepSeek({ apiKey: cfg.llm.deepseekApiKey, baseUrl: cfg.llm.deepseekBaseUrl });
 
   // 会话级状态（L5）：每会话一个 tracker + mood；教练交互框架 tracker 同理。
   const tracker = new ModeTracker();
@@ -28,8 +28,8 @@ async function main() {
   const result = await runTurnNonStreaming(
     {
       llm,
-      scoreModel: cfg.scoreModel,
-      generateModel: cfg.generateModel,
+      scoreModel: cfg.llm.scoreModel,
+      generateModel: cfg.llm.generateModel,
       safetyGuard: new NoopSafetyGuard(),
       tracker,
       coachTracker,

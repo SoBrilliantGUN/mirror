@@ -1,4 +1,4 @@
-// TurnTakingController —— 一通电话的「谁来说、何时说、怎么停」状态机，从 session.ts 抽出。
+// ConversationFlowController —— 一通电话的「谁来说、何时说、怎么停」状态机，从 session.ts 抽出。
 // 只管决策与计时，不碰 llm/tts/transcript 这些 I/O 资源（那些仍留在 CallSession，经 host 回调触发）。
 //
 // 跨模块共享的状态字段（CallSession 的 respond/onAsrResult 也读写）用 public 暴露；
@@ -11,7 +11,7 @@ import { VocalEventAggregator } from './speech/vocalEvents';
 import type { DominantVocal } from './speech/vocalEvents';
 
 // —— 主动发话 / 打断计时（全部程序计时，不靠 LLM 自觉）。测试注入小值加速。 ——
-export type TurnTakingTiming = {
+export type ConversationFlowTiming = {
   followupMs: number;       // 问句后多久追问自答
   noReplyLimit: number;     // 1 次没答→自问自答，2 次→问"还在吗"，3 次→情绪化收尾
   coachSilentMs: number;    // 教练态沉默多久轻轻确认
@@ -24,7 +24,7 @@ export type TurnTakingTiming = {
   vocalCooldownMs: number;  // 两次哭/笑响应的冷却
 };
 
-export const DEFAULT_TIMING: TurnTakingTiming = {
+export const DEFAULT_TIMING: ConversationFlowTiming = {
   followupMs: 5000,
   noReplyLimit: 3,
   coachSilentMs: 30000,
@@ -40,7 +40,7 @@ export const DEFAULT_TIMING: TurnTakingTiming = {
 export type ProactiveKind = 'greeting' | 'nudge' | 'followup' | 'checkin' | 'farewell' | 'coachClose';
 
 // 控制器需要从 CallSession 借的资源（窄回调，不背实现）。
-export type TurnTakingHost = {
+export type ConversationFlowHost = {
   respond(userText: string, vocals: VocalizationEvent[], dominantVocal: DominantVocal): Promise<void>;
   speakProactive(kind: ProactiveKind): Promise<void>;
   gate: GenerationGate;
@@ -68,7 +68,7 @@ export function nudgeDelayMs(mood: MoodState | null, incongruence: boolean): num
   return Math.round(Math.min(Math.max(ms, 5000), 24000)); // 夹在 5s ~ 24s
 }
 
-export class TurnTakingController {
+export class ConversationFlowController {
   // —— 会话级共享状态（CallSession 经下方窄方法读/写，不直接碰字段）——
   // 之前这些字段是 public、由 CallSession 直接写，靠一张「谁在哪个点写」的手工表维持一致；
   // 现收敛为窄方法（recordVocal / captureTurn / markAsked / markFarewell / …），
@@ -95,7 +95,7 @@ export class TurnTakingController {
   private noReplyStreak = 0;
   private coachCheckinDone = false;
 
-  constructor(private readonly host: TurnTakingHost, private readonly timing: TurnTakingTiming) {}
+  constructor(private readonly host: ConversationFlowHost, private readonly timing: ConversationFlowTiming) {}
 
   // 新通话开始时重置（对应 handleOffer 里的那批重置）。
   reset(): void {
