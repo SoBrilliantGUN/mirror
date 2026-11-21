@@ -3,6 +3,7 @@ import type { LlmClient } from '../llm/client';
 // ASR 上下文纠错：语音识别把一句话听成同音/近音字（"刚跟八股文较劲完" → "干根巴股文较劲丸"）。
 // 用最近对话上下文把明显听错的字词改回通顺原话，再进装配/落库。只改错字、不添意思。
 // 与 nameNormalizer 的名字级纠正互补——那个只碰「名字」，这个碰「正文里的同音错字」。
+// 这里必须注入「对话双方的名字」，否则纠错会把名字当错别字二次改坏（如「明悦」→「一鸣悦」）。
 
 const ASR_CORRECT_SYSTEM = `你是语音转写纠错器。对方刚说的一句话被语音识别听成了一串同音/近音字，可能有错别字、多字漏字、错词。请根据上下文，把它改写成对方真正想说的、通顺自然的中文。
 
@@ -12,11 +13,21 @@ const ASR_CORRECT_SYSTEM = `你是语音转写纠错器。对方刚说的一句�
 3. 只纠正听错的字词，不增删对方没说过的意思，不把一句话改写成另一句话。
 4. 只输出纠正后的那一句，不要解释、不要引号、不要任何前缀后缀。`;
 
+// 注入双方名字的规则段：名字是专名，别当错别字改。
+function buildNamesHint(names?: { personaName: string; userName?: string }): string {
+  const parts: string[] = [];
+  if (names?.personaName) parts.push(`陪伴者自己的名字叫「${names.personaName}」`);
+  if (names?.userName) parts.push(`对方的名字叫「${names.userName}」`);
+  if (parts.length === 0) return '';
+  return `\n5. 名字是专名、不是错别字：${parts.join('，')}。凡遇到这些名字被听成同音/近音字（如「明悦」被听成「明月/鸣悦」、「张渔歌」被听成「章鱼哥」），一律改回正确的名字，**不要把名字当错别字改成别的词**。`;
+}
+
 export async function correctAsrText(
   llm: LlmClient,
   model: string,
   text: string,
   context: string,
+  names?: { personaName: string; userName?: string },
 ): Promise<string> {
   const t = (text ?? '').trim();
   if (!t) return t;
@@ -26,7 +37,7 @@ export async function correctAsrText(
   try {
     const out = await llm.chat(
       [
-        { role: 'system', content: ASR_CORRECT_SYSTEM },
+        { role: 'system', content: ASR_CORRECT_SYSTEM + buildNamesHint(names) },
         { role: 'user', content: user },
       ],
       { model, temperature: 0, maxTokens: 100 },

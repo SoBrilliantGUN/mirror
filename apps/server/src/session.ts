@@ -205,6 +205,7 @@ export class CallSession {
   private readonly userSaid: string[] = [];
   private prevTurnMemoryIds: string[] = [];
   private recentVoiceAt = 0;
+  private lastRawAsrText = ''; // 用户本轮 ASR 原始识别，供 transcript 落三版（raw/名字纠正后/最终）
   private userGender: '男' | '女' | null = null;
 
   // 主动发话 / 打断 / 收尾状态机（从本类抽出；跨模块共享状态见其 public 字段）
@@ -509,6 +510,7 @@ export class CallSession {
         this.backchannel.onTurnEnd();
         this.turnTaking.captureTurn(cleanText, vocals, dominantVocal);
         this.rtc?.sendControl({ type: 'transcript', role: 'user', text: cleanText });
+        this.lastRawAsrText = t; // 记 ASR 原文，供 transcript 落三版
         this.respond(cleanText, vocals, dominantVocal).catch(console.error);
       }
     } else if (t) {
@@ -578,7 +580,7 @@ export class CallSession {
       )),
       this.obs.span('recall', () => recallContext(assembleDeps, { text: userText, history: this.history, loadedDetails: this.loadedDetails })),
       this.askedQuestions.recent(this.persona.name, this.userId, 3),
-      this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.llm.generateModel, userText, formatHistory(this.history.slice(-6)))),
+      this.obs.span('asr-correct', () => correctAsrText(this.llm, this.cfg.llm.generateModel, userText, formatHistory(this.history.slice(-6)), { personaName: this.persona.name, userName: this.cfg.userName || undefined })),
     ]);
     if (!this.gate.isCurrent(myGen)) return;
     this.mood = plan.mood;
@@ -662,7 +664,7 @@ export class CallSession {
     });
     if (this.gate.isCurrent(myGen)) {
       reachedEnd = true;
-      this.recordTurnOutcome({ plan, ctx, userText: corrected, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
+      this.recordTurnOutcome({ plan, ctx, userText: corrected, rawText: this.lastRawAsrText, nameCorrected: userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs });
     }
     } finally {
       this.cleanupInterrupted(myGen, reachedEnd);
@@ -804,13 +806,15 @@ export class CallSession {
     plan: TurnPlan;
     ctx: RecalledContext;
     userText: string;
+    rawText: string;
+    nameCorrected: string;
     fullText: string;
     acoustics: AcousticFeatures;
     vocals: VocalizationEvent[];
     awaitsResponse: boolean | null;
     firstTokenMs: number;
   }): void {
-    const { plan, ctx, userText, fullText, acoustics, vocals, awaitsResponse, firstTokenMs } = opts;
+    const { plan, ctx, userText, rawText, nameCorrected, fullText, acoustics, vocals, awaitsResponse, firstTokenMs } = opts;
     this.turnTaking.clearCapturedTurn();
     this.history.push({ kind: 'turn', role: 'user', text: userText });
     const agentText = fullText.trim();
@@ -821,6 +825,8 @@ export class CallSession {
     this.obs.setOutput(agentText);
     const asked = awaitsResponse !== null ? awaitsResponse : isAsking(agentText);
     this.recordTranscript('user', userText, {
+      rawText,
+      nameCorrected,
       affect: plan.affect,
       acoustic: acoustics,
       vocals: vocals.length ? vocals : undefined,

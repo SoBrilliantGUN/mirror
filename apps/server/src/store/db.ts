@@ -142,6 +142,8 @@ export async function ensureSchema(pool: Pool): Promise<void> {
       session_id uuid,
       role text NOT NULL,                 -- user | agent
       text text NOT NULL,
+      raw_text text,                      -- 用户消息：ASR 原始识别（纠错前）
+      name_corrected text,                -- 用户消息：名字纠正后的中间版
       turn_index int NOT NULL,
       emotion text,                       -- agent 本轮情绪（warm/tender/steady/natural）
       affect jsonb,                       -- user 本轮 affect（valence/arousal/dominance/incongruence）

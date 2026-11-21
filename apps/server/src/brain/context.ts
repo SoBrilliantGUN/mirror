@@ -54,7 +54,7 @@ function fillGroup(label: string, items: Memory[], budget: number): { text: stri
 // 按 token 预算贪心填充；空则返回空串。
 export function formatMemoryBlock(recalled: RecalledMemories, maxTokens: number): string {
   const groups: { label: string; items: Memory[] }[] = [
-    { label: '约束（硬规则/红线，必须遵守）', items: recalled.constraint },
+    { label: '约束（硬规则/红线，无条件必须遵守、任何情况下不得违反）', items: recalled.constraint },
     { label: '特质（对方的稳定性格/价值观/长期模式 + 你对 TA 的理解，时刻记得）', items: recalled.profile },
     { label: '近况（对方当前的近况/状态/计划，会变化）', items: recalled.state },
     { label: '偏好（软规则/习惯，长期有效）', items: recalled.preference },
@@ -130,7 +130,7 @@ export function formatIdentityBlock(fields: IdentityField[]): string {
 // [约束] 尾部重放：把硬规则/红线再强调一遍（头部 [MEMORY] 已有一遍，这里防 lost-in-the-middle）。空则返回空串。
 export function formatConstraintReminder(constraints: Memory[]): string {
   if (constraints.length === 0) return '';
-  return '[约束] 再强调一遍，这些硬规则/红线务必遵守，别因为聊得投入就忘掉：\n' + constraints.map((c) => `- ${c.content}`).join('\n');
+  return '[约束] 再强调一遍：下面是对方划的硬规则/红线，**无条件必须遵守、任何情况下都不得违反**（对话氛围再轻松也别放水）：\n' + constraints.map((c) => `- ${c.content}`).join('\n');
 }
 
 const STAGE_LABEL: Record<string, string> = {
