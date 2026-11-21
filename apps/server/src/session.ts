@@ -81,6 +81,8 @@ import { createSessionsStore } from './store/sessions';
 import { createTranscriptStore, type TurnInsert } from './store/transcript';
 import { createAskedQuestionsStore } from './store/askedQuestions';
 import { createConversationSummariesStore } from './store/conversationSummaries';
+import { analyzeSessionTopics, refreshTopicLibrary } from './brain/topicLibrary';
+import type { TopicsStore } from './store/topics';
 
 // 语气词附和（「嗯/哦/啊/好/对/是/唔」及其重复）：抢话语境下判定为附和、不算真实打断。
 function isFillerText(text: string): boolean {
@@ -136,6 +138,7 @@ export type SessionDeps = {
   identity: IdentityStore;
   sessions: ReturnType<typeof createSessionsStore>;
   transcript: ReturnType<typeof createTranscriptStore>;
+  topics: TopicsStore;
   obs: Obs;
   timeAware: TimeAware;
   summarizer: HistorySummarizer;
@@ -165,6 +168,7 @@ export class CallSession {
   private readonly identity: IdentityStore;
   private readonly sessions: SessionDeps['sessions'];
   private readonly transcript: SessionDeps['transcript'];
+  private readonly topics: TopicsStore;
   private readonly obs: Obs;
   private readonly timeAware: TimeAware;
   private readonly summarizer: HistorySummarizer;
@@ -239,6 +243,7 @@ export class CallSession {
     this.identity = deps.identity;
     this.sessions = deps.sessions;
     this.transcript = deps.transcript;
+    this.topics = deps.topics;
     this.obs = deps.obs;
     this.timeAware = deps.timeAware;
     this.summarizer = deps.summarizer;
@@ -683,6 +688,11 @@ export class CallSession {
       input: { kind },
     }, async () => {
     try {
+      let topicLibrary = '';
+      if (kind === 'nudge' && this.coachTracker.current === 'friend') {
+        const lib = await this.topics.listLibrary(this.persona.name, this.userId, 5).catch(() => []);
+        if (lib.length > 0) topicLibrary = lib.map((e) => `-「${e.topic}」：${e.summary}`).join('\n');
+      }
       const system = buildProactiveSystemPrompt(
         kind,
         buildLanguagePrompt(this.persona.systemPrompt, this.lang, this.englishMode, this.cfg.userName),
@@ -691,6 +701,7 @@ export class CallSession {
           curiosityHint: kind === 'nudge' && this.coachTracker.current === 'friend' ? this.lastCuriosityHint || undefined : undefined,
           recentTurns: formatHistory(this.history.slice(-6)),
           mood: this.mood,
+          topicLibrary,
         },
       );
       const text = await generateProactiveText(this.llm, this.cfg.llm.generateModel, system);
@@ -743,6 +754,17 @@ export class CallSession {
     this.rtc = null;
     this.sed?.close();
     this.turnTaking.teardown();
+    // 话题分析（后台 fire-and-forget）：抽本通聊过的自由主题 + 深入度，攒到感兴趣再去搜网存备用话题库。
+    const topicTurns = snap.filter((h) => h.kind === 'turn').map((h) => ({ role: h.role, text: h.text }));
+    if (topicTurns.some((t) => t.role === 'user')) {
+      const topicPersona = this.persona.name;
+      const topicUserId = this.userId;
+      const topicSessionId = this.currentSessionId;
+      void (async () => {
+        const n = await analyzeSessionTopics({ llm: this.llm, model: this.cfg.llm.generateModel, topics: this.topics, turns: topicTurns, personaName: topicPersona, userId: topicUserId, sessionId: topicSessionId });
+        if (n > 0) await refreshTopicLibrary({ llm: this.llm, model: this.cfg.llm.generateModel, topics: this.topics, searchApiKey: this.cfg.search.bochaApiKey, searchBaseUrl: this.cfg.search.bochaBaseUrl, personaName: topicPersona, userId: topicUserId });
+      })().catch((e) => console.warn('[topic] 话题分析失败：', e));
+    }
     if (this.currentSessionId) {
       const id = this.currentSessionId;
       this.currentSessionId = null;

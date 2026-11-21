@@ -191,4 +191,32 @@ export async function ensureSchema(pool: Pool): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS dream_runs_persona_user_time_idx ON dream_runs (persona_name, user_id, created_at DESC)`);
+
+  // 话题参与记录：每通电话结束后，LLM 抽出的「自由主题 + 是否深入聊」。按人物/用户隔离。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS topic_engagements (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      persona_name text NOT NULL,
+      user_id text NOT NULL,
+      topic text NOT NULL,
+      session_id uuid,
+      engaged boolean NOT NULL DEFAULT false,
+      turns int NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS topic_engagements_persona_user_topic_idx ON topic_engagements (persona_name, user_id, topic)`);
+
+  // 备用话题库：对「感兴趣」（>3 通且每通深入）的主题，搜网后总结的素材。按人物/用户隔离。
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS topic_library (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      persona_name text NOT NULL,
+      user_id text NOT NULL,
+      topic text NOT NULL,
+      summary text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS topic_library_persona_user_idx ON topic_library (persona_name, user_id, created_at DESC)`);
 }

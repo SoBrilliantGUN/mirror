@@ -1,5 +1,5 @@
 // Electron 主进程：起内嵌 PG → 起 server 子进程 → 静态服务喂前端 → 开窗口 + 设置 IPC。
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, Tray } from 'electron';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ const CLIENT_PORT = 3000;
 
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 
 // 主进程崩溃兜底：落日志 + 弹窗，然后退出（崩溃后状态不可靠，别带病运行）。孤儿 PG 下次启动会自动复用。
 process.on('uncaughtException', (e) => {
@@ -115,6 +116,25 @@ function createWindow(): Promise<void> {
   });
 }
 
+// 重开窗口（托盘「打开窗口」/ 双击图标）。
+function openWindow(): void {
+  if (mainWindow) { mainWindow.show(); return; }
+  void createWindow();
+}
+
+// 系统托盘：关窗口后进程继续后台跑（话题分析/做梦需要空闲时间），点图标重开、或彻底退出。
+function createTray(): void {
+  if (tray) return;
+  tray = new Tray(join(__dirname, 'icon.png'));
+  tray.setToolTip('mirror · 生活教练陪伴');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开窗口', click: () => openWindow() },
+    { type: 'separator' },
+    { label: '彻底退出', click: () => app.quit() },
+  ]));
+  tray.on('double-click', () => openWindow());
+}
+
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null); // 去掉 File/Edit/View/Window 默认菜单
 
@@ -137,10 +157,11 @@ app.whenReady().then(async () => {
   });
 
   await boot();
+  createTray();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // 关窗口 = 缩到托盘继续后台跑（不退出），这样空闲时的话题分析/做梦才有时间跑。彻底退出走托盘菜单。
 });
 
 // 优雅关停：先停 server 子进程 + 内嵌 PG（pg_ctl stop），避免残留 postgres 进程占着 5432。

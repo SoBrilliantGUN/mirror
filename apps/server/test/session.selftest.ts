@@ -76,6 +76,7 @@ function makeSession() {
     identity: { list: async () => [], upsert: async () => {} } as any,
     sessions: { start: async () => 'sid', end: async () => {}, signals: async () => ({ recentCalls7d: 0, currentCallMinutes: 0, lastGapMinutes: null }) } as any,
     transcript: { insert: async () => {}, list: async () => [] } as any,
+    topics: { recordEngagement: async () => {}, topicSessionStats: async () => [], hasLibraryTopic: async () => false, saveLibrary: async () => {}, listLibrary: async () => [] } as any,
     obs: mockObs,
     timeAware: { currentTimeContext: () => ({}), upcomingDates: async () => [], scheduleCareHint: () => '' } as any,
     summarizer: async () => '',
