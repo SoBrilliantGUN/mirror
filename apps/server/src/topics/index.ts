@@ -10,6 +10,12 @@ import 宠物 from './宠物.json';
 import 旅行 from './旅行.json';
 import 价值观 from './价值观.json';
 import 健康 from './健康.json';
+import 金钱 from './金钱.json';
+import 美食 from './美食.json';
+import 娱乐 from './娱乐.json';
+import 生活日常 from './生活日常.json';
+import 自我认知 from './自我认知.json';
+import 梦想 from './梦想.json';
 
 export type TopicQuestion = { id: string; text: string };
 export type TopicAspect = { aspect: string; questions: TopicQuestion[] };
@@ -48,6 +54,12 @@ export const TOPIC_DIMENSIONS: Record<string, TopicDimension> = {
   旅行: buildDimension(旅行),
   价值观: buildDimension(价值观),
   健康: buildDimension(健康),
+  金钱: buildDimension(金钱),
+  美食: buildDimension(美食),
+  娱乐: buildDimension(娱乐),
+  生活日常: buildDimension(生活日常),
+  自我认知: buildDimension(自我认知),
+  梦想: buildDimension(梦想),
 };
 
 // 按维度名取该维度的完整结构（语义上「先定维度、再取对应文件」）。
