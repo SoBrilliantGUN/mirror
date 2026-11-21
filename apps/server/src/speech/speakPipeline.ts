@@ -46,6 +46,7 @@ export type StreamTurnSpeechDeps = {
   signal: AbortSignal;
   tts: TtsEngine;
   pushAgentPcm: (pcm: Uint8Array) => void;
+  pushTranscript: (text: string) => void; // 逐句把已说出口的话推给前端（流式字幕）
   sleep: (ms: number) => Promise<void>;
   tStart: number;
   obs: Obs;
@@ -66,7 +67,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
     llm, generateModel, messages, baseEmotion, voice, voiceTint, rate,
     cosyvoiceModel, dashscopeWsUrl, dashscopeApiKey,
     bochaApiKey, bochaBaseUrl, searchEnabled,
-    gate, gen, signal, tts, pushAgentPcm, sleep, tStart, obs,
+    gate, gen, signal, tts, pushAgentPcm, pushTranscript, sleep, tStart, obs,
   } = deps;
 
   let awaitsResponse: boolean | null = null;
@@ -84,6 +85,7 @@ export async function streamTurnSpeech(deps: StreamTurnSpeechDeps): Promise<Stre
       obs.score('first-token-ms', firstTokenMs);
     }
     console.log('[TTS] 合成这句：', clean, '情绪：', segEmotion);
+    pushTranscript(clean); // 逐句推字幕（边说边显示）
     await obs.span('tts', () => tts.synthesize({
       model: cosyvoiceModel,
       voice,

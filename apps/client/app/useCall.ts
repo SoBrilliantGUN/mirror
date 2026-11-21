@@ -21,6 +21,7 @@ export function useCall(getServer: () => string) {
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
   const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRef = useRef<((reason: 'hangup' | 'disconnect') => void) | null>(null);
+  const memoryRef = useRef<(() => void) | null>(null);
 
   function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
     if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -98,8 +99,9 @@ export function useCall(getServer: () => string) {
     endedRef.current?.('hangup');
   }
 
-  function start(companionName: string, onEnded: (reason: 'hangup' | 'disconnect') => void) {
+  function start(companionName: string, onEnded: (reason: 'hangup' | 'disconnect') => void, onMemory?: () => void) {
     endedRef.current = onEnded;
+    memoryRef.current = onMemory ?? null;
     setStatus('连接中…');
     setSafety(null);
     setMuted(false);
@@ -118,8 +120,22 @@ export function useCall(getServer: () => string) {
           try {
             const msg = JSON.parse(String(ev.data));
             if (msg.type === 'hangup') hangup();
+            if (msg.type === 'memory') memoryRef.current?.();
             if (msg.type === 'safety') setSafety({ level: msg.level, resources: msg.resources });
-            if (msg.type === 'transcript') setTranscript((prev) => [...prev, { role: msg.role, text: String(msg.text ?? '') }]);
+            if (msg.type === 'transcript') {
+              if (msg.replace) {
+                // ASR 纠错后回传：替换最后一条用户原文。
+                setTranscript((prev) => {
+                  const next = [...prev];
+                  for (let i = next.length - 1; i >= 0; i--) {
+                    if (next[i].role === 'user') { next[i] = { ...next[i], text: String(msg.text ?? '') }; break; }
+                  }
+                  return next;
+                });
+              } else {
+                setTranscript((prev) => [...prev, { role: msg.role, text: String(msg.text ?? '') }]);
+              }
+            }
           } catch { /* 非 JSON 忽略 */ }
         };
 

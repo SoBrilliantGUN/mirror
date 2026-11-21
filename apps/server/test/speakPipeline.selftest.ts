@@ -49,6 +49,7 @@ function baseDeps(overrides: Partial<StreamTurnSpeechDeps> = {}): StreamTurnSpee
     signal,
     tts: { synthesize: async () => {} } as any,
     pushAgentPcm: () => {},
+    pushTranscript: () => {},
     sleep: async () => {},
     tStart: Date.now(),
     obs: fakeObs,
