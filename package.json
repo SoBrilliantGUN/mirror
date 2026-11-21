@@ -16,7 +16,6 @@
     "rt-tts": "tsx apps/server/src/scripts/test-realtime-tts.ts",
     "test-nls": "tsx apps/server/src/scripts/test-nls.ts",
     "gen:personas": "tsx scripts/gen-personas.ts",
-    "gen:topics": "tsx apps/server/src/scripts/gen-topics.ts",
     "prestart": "npm run gen:personas",
     "preclient": "npm run gen:personas",
     "start": "tsx apps/server/src/run.ts",

@@ -11,7 +11,7 @@ import 旅行 from './旅行.json';
 import 价值观 from './价值观.json';
 import 健康 from './健康.json';
 
-export type TopicQuestion = { id: string; text: string; material: string; generatedAt: string };
+export type TopicQuestion = { id: string; text: string };
 export type TopicAspect = { aspect: string; questions: TopicQuestion[] };
 export type TopicDimension = { dimension: string; aspects: TopicAspect[] };
 
@@ -22,7 +22,7 @@ function hash8(s: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
-type RawDimension = { dimension: string; aspects: { aspect: string; questions: { text: string; material?: string; generatedAt?: string }[] }[] };
+type RawDimension = { dimension: string; aspects: { aspect: string; questions: { text: string }[] }[] };
 
 function buildDimension(raw: RawDimension): TopicDimension {
   return {
@@ -32,8 +32,6 @@ function buildDimension(raw: RawDimension): TopicDimension {
       questions: a.questions.map((q) => ({
         id: `${raw.dimension}_${a.aspect}_${hash8(q.text)}`,
         text: q.text,
-        material: q.material ?? '',
-        generatedAt: q.generatedAt ?? '',
       })),
     })),
   };

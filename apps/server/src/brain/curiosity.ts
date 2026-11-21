@@ -11,7 +11,6 @@ export type CuriosityPick = {
   dimension: string;
   aspect: string;
   question: string;
-  material: string;
 };
 
 // 每个维度的评分明细（记录进聊天记录，便于后续调权重）。
@@ -88,7 +87,7 @@ export async function pickCuriosityTopic(deps: {
   for (const a of dim.aspects) {
     for (const q of a.questions) {
       if (!deps.askedIds.has(q.id)) {
-        candidates.push({ id: q.id, dimension: dim.dimension, aspect: a.aspect, question: q.text, material: q.material });
+        candidates.push({ id: q.id, dimension: dim.dimension, aspect: a.aspect, question: q.text });
       }
     }
   }

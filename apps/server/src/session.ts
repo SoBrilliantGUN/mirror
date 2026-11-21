@@ -619,7 +619,7 @@ export class CallSession {
     if (switchTopic) {
       const pick = await this.pickRecommendedTopic();
       if (pick) {
-        recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+        recommendedTopic = `「${pick.question}」`;
         this.lastCuriosityTrace = { scored: pick.scored, pickedId: pick.id, pickedQuestion: pick.question };
         void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
       }
@@ -725,7 +725,7 @@ export class CallSession {
         if (lib.length > 0) topicLibrary = lib.map((e) => `-「${e.topic}」：${e.summary}`).join('\n');
         const pick = await this.pickRecommendedTopic();
         if (pick) {
-          recommendedTopic = pick.material ? `「${pick.question}」——可顺带聊聊：${pick.material}` : `「${pick.question}」`;
+          recommendedTopic = `「${pick.question}」`;
           this.lastCuriosityTrace = { scored: pick.scored, pickedId: pick.id, pickedQuestion: pick.question };
           void this.askedTopics.record(this.persona.name, this.userId, pick.id).catch(() => {});
         }
